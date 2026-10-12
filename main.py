@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="17.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="17.1")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +24,7 @@ if GEMINI_API_KEY:
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Gemini Vision Active"}
+    return {"status": "Live", "engine": "Gemini Vision Active v17.1"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -42,13 +42,11 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            # API容量制限対策で画像をリサイズ
             image.thumbnail((800, 800))
             pil_images.append(image)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    # APIキーが未設定の場合の安全対策
     if not GEMINI_API_KEY:
         return {
             "overall_score": 85.0,
@@ -60,20 +58,21 @@ async def authenticate(
             "details": [{"name": "API接続確認", "pass": False}]
         }
 
-    try:
-        # 互換性の高いVisionモデルを使用
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        prompt = f"""
+    # 利用可能な安定モデルを順に試行するロジック
+    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro']
+    response_text = None
+    last_error = None
+
+    prompt = f"""
 あなたは最高峰の高級ブランド鑑定士および中古市場プロ査定士です。
 提供された画像（最大4枚）を解析し、正確なJSON形式のみで出力してください。
 
 対象ブランド: {brand}
 カテゴリ: {category}
-補足入力: {model_number or 'なし'}
+手入力補足: {model_number or 'なし'}
 
 【解析命令】
-1. 画像（文字盤、ダイヤ、ブレス、刻印等）から最も正確な型番・モデル名（例: 16233G デイトジャスト 10Pダイヤ, M61864 ジッピーウォレット 等）を自動識別してください。
+1. 画像（文字盤、ダイヤ、ブレス、刻印、フレーム形状等）から最も正確な型番・モデル名（例: 16233G デイトジャスト 10Pダイヤ, Z2434U, M61864 等）を自動識別してください。
 2. 真贋一致率スコア（0.0〜100.0）を算出してください。
 3. 判定ランク（「基準内」「判定保留（目視確認推奨）」「基準外（偽造品の懸念あり）」）を決定してください。
 4. 推定「買取店相場」「フリマ相場」「オークション相場」の金額（円）を算出してください。
@@ -99,22 +98,22 @@ async def authenticate(
 }}
 """
 
-        response = model.generate_content([prompt] + pil_images)
-        res_text = response.text.strip()
-        
-        clean_json = re.sub(r'```json\s*|\s*```', '', res_text).strip()
-        result_data = json.loads(clean_json)
+    for m_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(m_name)
+            res = model.generate_content([prompt] + pil_images)
+            if res and res.text:
+                response_text = res.text.strip()
+                break
+        except Exception as err:
+            last_error = err
+            continue
 
-        return result_data
-
-    except Exception as e:
-        # 万一AI側でエラーが起きてもアプリを落とさずエラー結果を返す
+    if not response_text:
         return {
             "overall_score": 75.0,
-            "judgment": "判定保留（AI解析通信エラー）",
+            "judgment": "判定保留（AI通信エラー）",
             "status_code": "REVIEW",
-            "detected_model": model_number or "解析中エラー発生",
-            "message": f"Gemini API通信エラー: {str(e)}。画像サイズやAPIキーをご確認ください。",
-            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
-            "details": [{"name": "AI解析レスポンス", "pass": False}]
-        }
+            "detected_model": model_number or "解析失敗",
+            "message": f"Gemini API通信エラー: {str(last_error)}",
+            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能
