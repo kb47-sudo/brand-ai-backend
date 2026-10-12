@@ -2,14 +2,15 @@ import os
 import io
 import json
 import re
-import time
+import base64
+import requests
 from PIL import Image
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="25.0")
+app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="27.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,10 +21,16 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Google GenAI Single Model Stable v25.0"}
+    return {
+        "status": "Live",
+        "engine": "Multi-Provider AI Fallback System v27.0",
+        "gemini_active": bool(GEMINI_API_KEY),
+        "groq_active": bool(GROQ_API_KEY)
+    }
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -36,24 +43,20 @@ async def authenticate(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
-    if not GEMINI_API_KEY:
-        return {
-            "overall_score": 85.0,
-            "judgment": "判定保留（APIキー未設定）",
-            "status_code": "REVIEW",
-            "detected_model": model_number or "16233G (デイトジャスト)",
-            "message": "RenderのEnvironmentに GEMINI_API_KEY が正しく設定されていません。",
-            "market_prices": {"buy_store": "750,000円 ～ 900,000円", "fleamarket": "900,000円 ～ 1,200,000円", "auction": "850,000円 ～ 1,100,000円"},
-            "details": [{"name": "API接続確認", "pass": False}]
-        }
-
     pil_images = []
+    base64_images = []
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
             image.thumbnail((800, 800))
             pil_images.append(image)
+
+            # Groq API用にBase64エンコード
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG")
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
@@ -92,35 +95,56 @@ async def authenticate(
 }}
 """
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    contents = [prompt] + pil_images
-
-    # 最新・公式モデルのみに絞り込み、混雑時は同モデルで最大3回再試行する
-    target_model = 'gemini-3.8-flash'
     response_text = None
     last_err = None
 
-    for attempt in range(3):
+    # --- 1フェーズ: Gemini API (メイン) ---
+    if GEMINI_API_KEY:
         try:
-            response = client.models.generate_content(
-                model=target_model,
-                contents=contents,
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            res = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=[prompt] + pil_images,
             )
-            if response and response.text:
-                response_text = response.text.strip()
-                break
+            if res and res.text:
+                response_text = res.text.strip()
         except Exception as e:
             last_err = e
-            # 503などの混雑時は1.5秒空けてリトライ
-            time.sleep(1.5)
+
+    # --- 2フェーズ: Groq Vision API (サブ無料枠) ---
+    if not response_text and GROQ_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            content_payload = [{"type": "text", "text": prompt}]
+            for b64_img in base64_images:
+                content_payload.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                })
+
+            groq_payload = {
+                "model": "llama-3.2-11b-vision-preview",
+                "messages": [{"role": "user", "content": content_payload}],
+                "temperature": 0.2
+            }
+            
+            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=20)
+            if g_res.status_code == 200:
+                g_json = g_res.json()
+                response_text = g_json["choices"][0]["message"]["content"].strip()
+        except Exception as e:
+            last_err = e
 
     if not response_text:
         return {
             "overall_score": 75.0,
-            "judgment": "判定保留（一時的なAI混雑）",
+            "judgment": "判定保留（無料AI上限到達）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析一時保留",
-            "message": f"Googleサーバーが応答しませんでした。少し置いて再度ボタンを押してください: {str(last_err)}",
+            "message": f"すべての無料AIの本日分制限に達しました。時間を置いてお試しください: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
         }
@@ -135,7 +159,7 @@ async def authenticate(
             "judgment": "判定保留（データ変換エラー）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析失敗",
-            "message": f"AI応答の読み込みに失敗しました: {str(e)}",
+            "message": f"AI応答のパースに失敗しました: {str(e)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "データフォーマット適合", "pass": False}]
         }
