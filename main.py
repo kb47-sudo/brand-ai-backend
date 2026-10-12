@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="28.0")
+app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="30.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v28.0",
+        "engine": "Multi-Provider AI Fallback System v30.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
@@ -52,7 +52,6 @@ async def authenticate(
             image.thumbnail((800, 800))
             pil_images.append(image)
 
-            # Groq API用にBase64エンコード
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG")
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
@@ -109,36 +108,43 @@ async def authenticate(
             if res and res.text:
                 response_text = res.text.strip()
         except Exception as e:
-            last_err = e  # エラー発生時はそのまま下段のGroqへ移行
+            last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: Groq Vision API (サブ無料枠) ---
+    # --- 2フェーズ: Groq Vision API (最新モデル順次試行) ---
     if not response_text and GROQ_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            content_payload = [{"type": "text", "text": prompt}]
-            for b64_img in base64_images:
-                content_payload.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-                })
+        groq_models = [
+            "llama-3.2-11b-vision-instruct",
+            "llama-3.2-90b-vision-instruct",
+            "meta-llama/llama-3.2-11b-vision-instruct"
+        ]
+        for g_model in groq_models:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                content_payload = [{"type": "text", "text": prompt}]
+                for b64_img in base64_images:
+                    content_payload.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                    })
 
-            groq_payload = {
-                "model": "llama-3.2-11b-vision-preview",
-                "messages": [{"role": "user", "content": content_payload}],
-                "temperature": 0.2
-            }
-            
-            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
-            if g_res.status_code == 200:
-                g_json = g_res.json()
-                response_text = g_json["choices"][0]["message"]["content"].strip()
-            else:
-                last_err = f"Groq HTTP {g_res.status_code}: {g_res.text}"
-        except Exception as e:
-            last_err = e
+                groq_payload = {
+                    "model": g_model,
+                    "messages": [{"role": "user", "content": content_payload}],
+                    "temperature": 0.2
+                }
+                
+                g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
+                if g_res.status_code == 200:
+                    g_json = g_res.json()
+                    response_text = g_json["choices"][0]["message"]["content"].strip()
+                    break
+                else:
+                    last_err = f"Groq {g_model} ({g_res.status_code}): {g_res.text}"
+            except Exception as e:
+                last_err = f"Groq Err: {str(e)}"
 
     if not response_text:
         return {
@@ -146,7 +152,7 @@ async def authenticate(
             "judgment": "判定保留（無料AI上限到達）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析一時保留",
-            "message": f"すべての無料AIの本日分制限に達しました。時間を置いてお試しください: {str(last_err)}",
+            "message": f"すべての無料AIの制限に達しました。時間をおいてお試しください: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
         }
