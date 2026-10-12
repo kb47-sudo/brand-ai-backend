@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="24.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="25.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +23,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Google GenAI Auto Retry & Failover v24.0"}
+    return {"status": "Live", "engine": "Google GenAI Single Model Stable v25.0"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -52,7 +52,6 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            # 安定通信のために解像度を最適化
             image.thumbnail((800, 800))
             pil_images.append(image)
         except Exception as e:
@@ -96,29 +95,24 @@ async def authenticate(
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = [prompt] + pil_images
 
-    # 試行するモデルの候補リスト（優先順）
-    models_to_try = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash']
+    # 最新・公式モデルのみに絞り込み、混雑時は同モデルで最大3回再試行する
+    target_model = 'gemini-3.8-flash'
     response_text = None
     last_err = None
 
-    # 各モデルに対して最大2回リトライする堅牢ロジック
-    for m_name in models_to_try:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=m_name,
-                    contents=contents,
-                )
-                if response and response.text:
-                    response_text = response.text.strip()
-                    break
-            except Exception as e:
-                last_err = e
-                # 混雑エラー(503等)のときは1秒待って再試行
-                time.sleep(1)
-                continue
-        if response_text:
-            break
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=target_model,
+                contents=contents,
+            )
+            if response and response.text:
+                response_text = response.text.strip()
+                break
+        except Exception as e:
+            last_err = e
+            # 503などの混雑時は1.5秒空けてリトライ
+            time.sleep(1.5)
 
     if not response_text:
         return {
@@ -126,7 +120,7 @@ async def authenticate(
             "judgment": "判定保留（一時的なAI混雑）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析一時保留",
-            "message": f"Googleサーバーが混雑しています。もう一度ボタンを押してください: {str(last_err)}",
+            "message": f"Googleサーバーが応答しませんでした。少し置いて再度ボタンを押してください: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
         }
