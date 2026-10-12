@@ -1,13 +1,14 @@
+import os
 import io
+import json
 import re
-import sqlite3
-import numpy as np
 from PIL import Image
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+import google.generativeai as genai
 
-app = FastAPI(title="Growth AI Brand Authenticator Engine", version="15.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="16.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -17,104 +18,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# SQLite データベース初期化
-DB_NAME = "ai_learning_data.db"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
-def init_sqlite_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS authentications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            brand TEXT,
-            category TEXT,
-            model_number TEXT,
-            serial_number TEXT,
-            score REAL,
-            judgment TEXT,
-            feature_hash REAL,
-            user_verified INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-init_sqlite_db()
-
-class GrowthAIEngine:
-    def find_learned_model(self, brand: str, feature_hash: float) -> Optional[str]:
-        """過去に学習された正解データから類似画像を検索"""
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT model_number FROM authentications
-            WHERE brand = ? AND user_verified = 1 AND model_number != ''
-            ORDER BY ABS(feature_hash - ?) ASC LIMIT 1
-        ''', (brand, feature_hash))
-        row = cursor.fetchone()
-        conn.close()
-        return row[0] if row else None
-
-    def save_record(self, brand: str, category: str, model_number: str, serial_number: str, score: float, judgment: str, feature_hash: float, is_verified: int = 0) -> int:
-        """査定実績・学習データを保存"""
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO authentications (brand, category, model_number, serial_number, score, judgment, feature_hash, user_verified)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (brand, category, model_number, serial_number, score, judgment, feature_hash, is_verified))
-        record_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return record_id
-
-    def update_feedback(self, record_id: int, correct_model: str):
-        """ユーザーからの正解データフィードバックを学習"""
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE authentications
-            SET model_number = ?, user_verified = 1
-            WHERE id = ?
-        ''', (correct_model, record_id))
-        conn.commit()
-        conn.close()
-
-    def calculate_market_prices(self, brand: str, score: float, has_model: bool) -> dict:
-        brand_upper = brand.upper()
-
-        base_val = 120000
-        if "ROLEX" in brand_upper:
-            base_val = 1800000
-        elif "HERMES" in brand_upper:
-            base_val = 800000
-        elif "CHANEL" in brand_upper:
-            base_val = 450000
-        elif "LOUIS" in brand_upper or "LV" in brand_upper:
-            base_val = 160000
-
-        if has_model:
-            base_val = int(base_val * 1.15)
-
-        condition_factor = max(0.2, score / 100.0)
-        
-        buy_store_min = int(base_val * condition_factor * 0.52)
-        buy_store_max = int(base_val * condition_factor * 0.65)
-
-        fleamarket_min = int(buy_store_min * 1.25)
-        fleamarket_max = int(buy_store_max * 1.35)
-
-        auction_min = int(buy_store_min * 1.15)
-        auction_max = int(buy_store_max * 1.28)
-
-        return {
-            "buy_store": f"{buy_store_min:,}円 ～ {buy_store_max:,}円",
-            "fleamarket": f"{fleamarket_min:,}円 ～ {fleamarket_max:,}円",
-            "auction": f"{auction_min:,}円 ～ {auction_max:,}円"
-        }
-
-growth_ai = GrowthAIEngine()
+@app.get("/")
+def read_root():
+    return {"status": "Live", "engine": "Gemini 1.5 Flash Vision Engine Active"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -127,36 +37,63 @@ async def authenticate(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
-    processed_images = []
-    total_hash = 0.0
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY が設定されていません。")
+
+    pil_images = []
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            img_array = np.array(image.resize((150, 150)), dtype=np.float32) / 255.0
-            processed_images.append(img_array)
-            total_hash += float(np.mean(img_array) + np.std(img_array))
+            pil_images.append(image)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    feature_hash = round(total_hash / len(processed_images), 4)
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+あなたは世界最高峰のブランド真贋鑑定士および中古市場プロ査定士です。
+提供された画像（最大4枚）を詳細に解析し、以下の情報を正確なJSON形式のみで出力してください。
 
-    # 過去の正解学習データからの特定
-    learned_model = growth_ai.find_learned_model(brand, feature_hash)
-    final_model_number = model_number.strip() if model_number.strip() else (learned_model or "")
+対象ブランド: {brand}
+指定カテゴリ: {category}
+手入力補足型番: {model_number or 'なし'}
 
-    total_feature_score = 0.0
-    for img in processed_images:
-        dx = np.abs(img[1:, :, :] - img[:-1, :, :])
-        dy = np.abs(img[:, 1:, :] - img[:, :-1, :])
-        edge_density = (np.mean(dx) + np.mean(dy)) * 100.0
-        color_std = np.std(img) * 100.0
-        score = 82.0 + (edge_density * 0.3) - (color_std * 0.2)
-        total_feature_score += score
+【解析命令】
+1. 画像の形状、文字盤、刻印、素材感（例: 10Pダイヤ、ジュビリーブレス、コンビ、文字盤色等）から、最も正確な型番・モデル名（例: 16233G デイトジャスト 10Pダイヤ, M61864 ジッピーウォレット 等）を自動特定してください。
+2. ブランド真贋の観点から、ロゴフォント・刻印の深さ・金属仕上げ・縫製などを厳格チェックし、真贋一致率スコア（0.0〜100.0）を算出してください。
+3. 判定ランクを「基準内」「判定保留（目視確認推奨）」「基準外（偽造品の懸念あり）」のいずれかで決定してください。
+4. この特定型番・モデルの現在の「買取店相場」「フリマ相場」「オークション相場」の目安金額を算出してください。
 
-    avg_score = total_feature_score / len(processed_images)
-    if final_model_number:
-        avg_score += 5.0
+【出力JSON形式（余計な解説文は含めずJSONのみ出力）】
+{{
+  "detected_model": "特定された型番・品名",
+  "overall_score": 88.5,
+  "judgment": "基準内",
+  "status_code": "PASS",
+  "message": "鑑定コメント詳細",
+  "market_prices": {{
+    "buy_store": "◯◯円 ～ ◯◯円",
+    "fleamarket": "◯◯円 ～ ◯◯円",
+    "auction": "◯◯円 ～ ◯◯円"
+  }},
+  "details": [
+    {{"name": "ロゴフォント・刻印配置の正確性", "pass": true}},
+    {{"name": "素材仕上げ・研磨・バリ処理の質感", "pass": true}},
+    {{"name": "シリアル/製造番号のフォーマット適合", "pass": true}},
+    {{"name": "細部構造・金具部品の基準一致", "pass": true}}
+  ]
+}}
+"""
 
-    final_score = round(float(np.clip(avg_score, 35.0, 98.5)), 1)
-    market_
+        response = model.generate_content([prompt] + pil_images)
+        res_text = response.text.strip()
+        
+        clean_json = re.sub(r'```json\s*|\s*```', '', res_text).strip()
+        result_data = json.loads(clean_json)
+
+        return result_data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gemini AI解析エラー: {str(e)}")
