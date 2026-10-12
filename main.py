@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="22.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="23.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Google GenAI Failover System v22.0"}
+    return {"status": "Live", "engine": "Google GenAI Clean Failover v23.0"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -94,8 +94,8 @@ async def authenticate(
     client = genai.Client(api_key=GEMINI_API_KEY)
     contents = [prompt] + pil_images
 
-    # 混雑時に自動切り替えするバックアップモデル配列
-    models_to_try = ['gemini-3.8-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    # 稼働実績のある最新モデルのみを試行する配列
+    models_to_try = ['gemini-3.8-flash']
     response_text = None
     last_err = None
 
@@ -118,7 +118,7 @@ async def authenticate(
             "judgment": "判定保留（一時的なAI混雑）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析一時保留",
-            "message": f"Googleサーバーが一時的に混雑しています。数秒後に再実行してください。: {str(last_err)}",
+            "message": f"Googleサーバーの応答待ちです。数秒置いて再度ボタンを押してください: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
         }
