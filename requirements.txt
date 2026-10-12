@@ -1,5 +1,6 @@
 fastapi
 uvicorn
-numpy
-pillow
 python-multipart
+Pillow
+numpy
+google-generativeai
