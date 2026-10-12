@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="21.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="22.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Google GenAI SDK gemini-3.8-flash Active"}
+    return {"status": "Live", "engine": "Google GenAI Failover System v22.0"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -91,28 +91,49 @@ async def authenticate(
 }}
 """
 
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        contents = [prompt] + pil_images
-        
-        # Google指定の最新モデル gemini-3.8-flash を呼び出し
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=contents,
-        )
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    contents = [prompt] + pil_images
 
-        res_text = response.text.strip()
-        clean_json = re.sub(r'```json\s*|\s*```', '', res_text).strip()
-        result_data = json.loads(clean_json)
-        return result_data
+    # 混雑時に自動切り替えするバックアップモデル配列
+    models_to_try = ['gemini-3.8-flash', 'gemini-1.5-flash', 'gemini-1.5-pro']
+    response_text = None
+    last_err = None
 
-    except Exception as e:
+    for m_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=m_name,
+                contents=contents,
+            )
+            if response and response.text:
+                response_text = response.text.strip()
+                break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if not response_text:
         return {
             "overall_score": 75.0,
-            "judgment": "判定保留（AI通信エラー）",
+            "judgment": "判定保留（一時的なAI混雑）",
             "status_code": "REVIEW",
-            "detected_model": model_number or "解析失敗",
-            "message": f"Gemini API通信エラー: {str(e)}",
+            "detected_model": model_number or "解析一時保留",
+            "message": f"Googleサーバーが一時的に混雑しています。数秒後に再実行してください。: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
+        }
+
+    try:
+        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+        result_data = json.loads(clean_json)
+        return result_data
+    except Exception as e:
+        return {
+            "overall_score": 70.0,
+            "judgment": "判定保留（データ変換エラー）",
+            "status_code": "REVIEW",
+            "detected_model": model_number or "解析失敗",
+            "message": f"AI応答の読み込みに失敗しました: {str(e)}",
+            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
+            "details": [{"name": "データフォーマット適合", "pass": False}]
         }
