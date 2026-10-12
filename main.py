@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="30.0")
+app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="31.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v30.0",
+        "engine": "Multi-Provider AI Fallback System v31.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
@@ -110,13 +110,27 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: Groq Vision API (最新モデル順次試行) ---
+    # --- 2フェーズ: Groq Vision API (利用可能モデルの動的フォールバック) ---
     if not response_text and GROQ_API_KEY:
         groq_models = [
-            "llama-3.2-11b-vision-instruct",
-            "llama-3.2-90b-vision-instruct",
-            "meta-llama/llama-3.2-11b-vision-instruct"
+            "llama-3.2-11b-vision-preview",
+            "llama-3.2-90b-vision-preview",
+            "llama-3.2-11b-instruct",
+            "llama-3.2-90b-instruct",
+            "llava-v1.5-7b-groq"
         ]
+        
+        # Groqの現行アクティブモデル一覧を動的に取得する（失敗時はリスト順試行）
+        try:
+            m_res = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, timeout=5)
+            if m_res.status_code == 200:
+                available_ids = [m["id"] for m in m_res.json().get("data", [])]
+                vision_active = [m for m in available_ids if "vision" in m or "llava" in m]
+                if vision_active:
+                    groq_models = vision_active + groq_models
+        except Exception:
+            pass
+
         for g_model in groq_models:
             try:
                 headers = {
