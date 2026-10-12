@@ -3,4 +3,4 @@ uvicorn
 python-multipart
 Pillow
 numpy
-google-generativeai
+google-genai
