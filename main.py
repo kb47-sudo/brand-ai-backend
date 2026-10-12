@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="18.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="19.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +24,7 @@ if GEMINI_API_KEY:
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Gemini 2.5 Flash Vision Active v18.0"}
+    return {"status": "Live", "engine": "Gemini 3.8 Flash Active v19.0"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -93,8 +93,8 @@ async def authenticate(
 }}
 """
 
-    # 現在稼働している有効モデルを順に実行する安全ロジック
-    models_to_try = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash']
+    # Google公式推奨モデル名『gemini-3.8-flash』を指定
+    models_to_try = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash-latest']
     last_err = None
     response_text = None
 
