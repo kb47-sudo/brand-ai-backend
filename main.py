@@ -8,14 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="17.1")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="17.2")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -24,7 +23,7 @@ if GEMINI_API_KEY:
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Gemini Vision Active v17.1"}
+    return {"status": "Live", "engine": "Gemini Vision Active v17.2"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -57,11 +56,6 @@ async def authenticate(
             "market_prices": {"buy_store": "750,000円 ～ 900,000円", "fleamarket": "900,000円 ～ 1,200,000円", "auction": "850,000円 ～ 1,100,000円"},
             "details": [{"name": "API接続確認", "pass": False}]
         }
-
-    # 利用可能な安定モデルを順に試行するロジック
-    candidate_models = ['gemini-2.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-pro']
-    response_text = None
-    last_error = None
 
     prompt = f"""
 あなたは最高峰の高級ブランド鑑定士および中古市場プロ査定士です。
@@ -98,15 +92,20 @@ async def authenticate(
 }}
 """
 
-    for m_name in candidate_models:
+    # 代表的なモデル名で順次呼び出しをトライ
+    models_to_try = ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-1.5-flash']
+    last_err = None
+    response_text = None
+
+    for m_name in models_to_try:
         try:
             model = genai.GenerativeModel(m_name)
             res = model.generate_content([prompt] + pil_images)
             if res and res.text:
                 response_text = res.text.strip()
                 break
-        except Exception as err:
-            last_error = err
+        except Exception as e:
+            last_err = e
             continue
 
     if not response_text:
@@ -115,5 +114,22 @@ async def authenticate(
             "judgment": "判定保留（AI通信エラー）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析失敗",
-            "message": f"Gemini API通信エラー: {str(last_error)}",
-            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能
+            "message": f"Gemini APIエラー: {str(last_err)}",
+            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
+            "details": [{"name": "AI解析レスポンス", "pass": False}]
+        }
+
+    try:
+        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+        result_data = json.loads(clean_json)
+        return result_data
+    except Exception as e:
+        return {
+            "overall_score": 70.0,
+            "judgment": "判定保留（JSON解析エラー）",
+            "status_code": "REVIEW",
+            "detected_model": model_number or "解析失敗",
+            "message": f"AI応答のパースに失敗しました: {str(e)}",
+            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
+            "details": [{"name": "データフォーマット適合", "pass": False}]
+        }
