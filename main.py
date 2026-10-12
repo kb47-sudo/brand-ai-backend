@@ -6,9 +6,10 @@ from PIL import Image
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="19.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="20.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,12 +20,10 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Gemini 3.8 Flash Active v19.0"}
+    return {"status": "Live", "engine": "Google GenAI SDK Active v20.0"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -37,16 +36,6 @@ async def authenticate(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
-    pil_images = []
-    for file in files:
-        contents = await file.read()
-        try:
-            image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((800, 800))
-            pil_images.append(image)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
-
     if not GEMINI_API_KEY:
         return {
             "overall_score": 85.0,
@@ -57,6 +46,16 @@ async def authenticate(
             "market_prices": {"buy_store": "750,000円 ～ 900,000円", "fleamarket": "900,000円 ～ 1,200,000円", "auction": "850,000円 ～ 1,100,000円"},
             "details": [{"name": "API接続確認", "pass": False}]
         }
+
+    pil_images = []
+    for file in files:
+        contents = await file.read()
+        try:
+            image = Image.open(io.BytesIO(contents)).convert('RGB')
+            image.thumbnail((800, 800))
+            pil_images.append(image)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
     prompt = f"""
 あなたは最高峰の高級ブランド鑑定士および中古市場プロ査定士です。
@@ -93,44 +92,30 @@ async def authenticate(
 }}
 """
 
-    # Google公式推奨モデル名『gemini-3.8-flash』を指定
-    models_to_try = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-1.5-flash-latest']
-    last_err = None
-    response_text = None
+    try:
+        # 新しいSDKのクライアント作成
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        
+        contents = [prompt] + pil_images
+        
+        # 最新標準モデル gemini-2.5-flash で呼び出し
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=contents,
+        )
 
-    for m_name in models_to_try:
-        try:
-            model = genai.GenerativeModel(m_name)
-            res = model.generate_content([prompt] + pil_images)
-            if res and res.text:
-                response_text = res.text.strip()
-                break
-        except Exception as e:
-            last_err = e
-            continue
+        res_text = response.text.strip()
+        clean_json = re.sub(r'```json\s*|\s*```', '', res_text).strip()
+        result_data = json.loads(clean_json)
+        return result_data
 
-    if not response_text:
+    except Exception as e:
         return {
             "overall_score": 75.0,
             "judgment": "判定保留（AI通信エラー）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析失敗",
-            "message": f"Gemini APIエラー: {str(last_err)}",
+            "message": f"Gemini API通信エラー: {str(e)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
-        }
-
-    try:
-        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
-        result_data = json.loads(clean_json)
-        return result_data
-    except Exception as e:
-        return {
-            "overall_score": 70.0,
-            "judgment": "判定保留（JSON解析エラー）",
-            "status_code": "REVIEW",
-            "detected_model": model_number or "解析失敗",
-            "message": f"AI応答のパースに失敗しました: {str(e)}",
-            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
-            "details": [{"name": "データフォーマット適合", "pass": False}]
         }
