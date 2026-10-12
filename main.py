@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="27.0")
+app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="28.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v27.0",
+        "engine": "Multi-Provider AI Fallback System v28.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
@@ -109,7 +109,7 @@ async def authenticate(
             if res and res.text:
                 response_text = res.text.strip()
         except Exception as e:
-            last_err = e
+            last_err = e  # エラー発生時はそのまま下段のGroqへ移行
 
     # --- 2フェーズ: Groq Vision API (サブ無料枠) ---
     if not response_text and GROQ_API_KEY:
@@ -131,10 +131,12 @@ async def authenticate(
                 "temperature": 0.2
             }
             
-            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=20)
+            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
             if g_res.status_code == 200:
                 g_json = g_res.json()
                 response_text = g_json["choices"][0]["message"]["content"].strip()
+            else:
+                last_err = f"Groq HTTP {g_res.status_code}: {g_res.text}"
         except Exception as e:
             last_err = e
 
