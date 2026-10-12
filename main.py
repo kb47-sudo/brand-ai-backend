@@ -7,9 +7,8 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
-from google.genai import types
 
-app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="20.0")
+app = FastAPI(title="Gemini AI Powered Authenticator Engine", version="21.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,7 +22,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 @app.get("/")
 def read_root():
-    return {"status": "Live", "engine": "Google GenAI SDK Active v20.0"}
+    return {"status": "Live", "engine": "Google GenAI SDK gemini-3.8-flash Active"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -93,14 +92,12 @@ async def authenticate(
 """
 
     try:
-        # 新しいSDKのクライアント作成
         client = genai.Client(api_key=GEMINI_API_KEY)
-        
         contents = [prompt] + pil_images
         
-        # 最新標準モデル gemini-2.5-flash で呼び出し
+        # Google指定の最新モデル gemini-3.8-flash を呼び出し
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-3.8-flash',
             contents=contents,
         )
 
