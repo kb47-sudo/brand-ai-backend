@@ -11,8 +11,9 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
+from google.genai import types
 
-app = FastAPI(title="Gemini Direct Fast AI Authenticator Engine", version="77.0")
+app = FastAPI(title="Pure Dynamic Visual AI Authenticator Engine", version="78.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Direct Fast AI Authenticator v77.0",
+        "engine": "Pure Dynamic Visual AI Authenticator v78.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -44,22 +45,17 @@ def clean_old_jobs():
         del JOBS[k]
 
 def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list):
-    pil_images = []
-    for b in raw_bytes_list:
-        try:
-            img = Image.open(io.BytesIO(b)).convert('RGB')
-            pil_images.append(img)
-        except Exception:
-            pass
-
-    # --- 第1フェーズ: Google Gemini API (本命・爆速) ---
-    if GEMINI_API_KEY and pil_images:
+    # --- 第1フェーズ: Google Gemini API (本命・Bytes型変換で不具合完全根絶) ---
+    if GEMINI_API_KEY and raw_bytes_list:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
-            contents = [prompt] + pil_images
+            gemini_contents = [prompt]
+            for img_bytes in raw_bytes_list:
+                gemini_contents.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+
             res = client.models.generate_content(
                 model='gemini-2.0-flash',
-                contents=contents,
+                contents=gemini_contents,
             )
             if res and hasattr(res, 'text') and res.text and len(res.text.strip()) > 0:
                 return res.text.strip()
@@ -90,7 +86,7 @@ def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list):
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -142,19 +138,19 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【厳格鑑識＆動的相場算出ルール】
+【超重要：厳格鑑識＆画像ダイレクト識別ルール】
 1. 『detected_model』:
-   - 提供された画像（形状、素材、柄、刻印、シリアル）から品物をダイレクトに読み取り、正しい日本語ブランド名・ライン名・商品名・型番を出力してください。
+   - 送信された画像（柄、形状、ロゴ刻印、シリアル印字等）を視覚的に直接読み取り、写っている実際の品名を正しい日本語（例: ルイ・ヴィトン ダミエ・エベヌ ジッピー・ウォレット / 型番: N41661 等）で特定してください。
+   - ※固定のバッグ名や他モデル名を出力することは【厳禁】です。画像に写っている商品そのものを識別してください。
 
-2. 『market_prices』 (最重要・動的算出):
-   - 特定した『detected_model』（品名・型番）に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に算出して具体的に出力してください。
-   - テンプレや他商品の数値を使い回すことは【絶対に禁止】です。必ず画像から特定された商品に応じた実勢価格を試算してください。
-     - buy_store: 買取店仕入れ目安（例: "◯◯◯,◯◯◯円 ～ ◯◯◯,◯◯◯円"）
+2. 『market_prices』 (画像特定モデルに応じた動的算出):
+   - 特定した『detected_model』に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に試算して出力してください。
+     - buy_store: 買取店仕入れ目安
      - fleamarket: メルカリ・ラクマ等の販売相場
      - auction: ヤフオク等の落札相場
 
 3. 『overall_score』 / 『judgment』:
-   - 根拠に基づいたリアルな一致率パーセンテージを出力してください。固定値の使い回しは禁止です。
+   - 根拠に基づいたリアルな一致率パーセンテージ（例: 96.5%、88.0%、65.0% 等）を出力してください。
    - 基準内: 95.0%〜100.0%
    - 判定保留: 85.0%〜94.9%
    - 不審あり: 84.9%以下
@@ -167,7 +163,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
-  "detected_model": "画像から特定した正確な日本語ブランド・ライン・品名・型番",
+  "detected_model": "画像から直接特定した正確な日本語ブランド・ライン・品名・型番",
   "overall_score": 96.5,
   "judgment": "基準内",
   "status_code": "PASS",
@@ -195,7 +191,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 }}
 """
 
-    for _ in range(3):
+    while True:
         clean_old_jobs()
         response_text = execute_ai_analysis(prompt, raw_bytes_list, base64_images)
         if response_text:
@@ -208,31 +204,8 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
                     return
             except Exception:
                 pass
-        time.sleep(1)
-
-    JOBS[job_id] = {
-        "status": "completed",
-        "created_at": time.time(),
-        "data": {
-            "detected_model": model_number or f"{brand} {category} (ディスカバリー・バムバッグPM相当)",
-            "overall_score": 93.0,
-            "judgment": "判定保留（要目視査定）",
-            "status_code": "REVIEW",
-            "message": "・画像および刻印情報を総合照合いたしました。刻印フォントおよび製造番号の適合性を検知しています。",
-            "suspicious_points": [],
-            "market_prices": {
-                "buy_store": "120,000円 ～ 150,000円",
-                "fleamarket": "160,000円 ～ 190,000円",
-                "auction": "145,000円 ～ 175,000円"
-            },
-            "details": [
-                {"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"},
-                {"name": "2. ®マーク・製造国刻印の凹み形状と底面平坦度", "status": "PASS"},
-                {"name": "3. シリアル/製造番号の打刻書体・年週法則適合性", "status": "PASS"},
-                {"name": "4. 金属パーツのエッジ面取り・メッキ層の均一性", "status": "PASS"}
-            ]
-        }
-    }
+        
+        time.sleep(2)
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -253,7 +226,7 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((500, 500))
+            image.thumbnail((550, 550))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
 
             buffered = io.BytesIO()
