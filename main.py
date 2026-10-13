@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini Client Resilient AI Authenticator Engine", version="72.0")
+app = FastAPI(title="Gemini 2.0 Flash Resilient AI Authenticator Engine", version="73.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +30,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Client Resilient AI Authenticator v72.0",
+        "engine": "Gemini 2.0 Flash Resilient AI Authenticator v73.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -102,12 +102,12 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    # --- 第1フェーズ: Google Gemini API (最高性能モデル) ---
+    # --- 第1フェーズ: Google Gemini API (gemini-2.0-flash) ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             res = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.0-flash',
                 contents=[prompt] + pil_images,
             )
             if res and res.text:
@@ -118,9 +118,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
     # --- 第2フェーズ: OpenRouter API ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
+            "google/gemini-2.0-flash-exp:free",
             "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "qwen/qwen-2-vl-72b-instruct:free",
-            "google/gemini-2.0-flash-exp:free"
+            "qwen/qwen-2-vl-72b-instruct:free"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -191,7 +191,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             JOBS[job_id] = {"status": "error", "message": f"パースエラー: {str(e)}"}
             return
 
-    JOBS[job_id] = {"status": "error", "message": "混雑のため解析を再試行しています。再度「実行」を押してください。"}
+    JOBS[job_id] = {"status": "error", "message": "一時的な混雑が発生しています。再度査定ボタンを押してください。"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
