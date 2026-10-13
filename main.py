@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Unlimited Wait Async AI Authenticator Engine", version="65.0")
+app = FastAPI(title="Stable Async AI Authenticator Engine", version="66.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Unlimited Wait Async AI Authenticator v65.0",
+        "engine": "Stable Async AI Authenticator v66.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -119,8 +119,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                # タイムアウト値を撤廃し、AIが応答を返すまで何秒でも粘る
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=30)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -166,4 +165,37 @@ async def authenticate(
     serial_number: Optional[str] = Form(""),
     files: List[UploadFile] = File(...)
 ):
+    if not files or len(files) < 1:
+        raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
+
+    pil_images = []
+    base64_images = []
     
+    for file in files:
+        contents = await file.read()
+        try:
+            image = Image.open(io.BytesIO(contents)).convert('RGB')
+            image.thumbnail((550, 550))
+            
+            image = ImageEnhance.Sharpness(image).enhance(1.2)
+            pil_images.append(image)
+
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG", quality=75)
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            base64_images.append(img_str)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
+
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {"status": "processing"}
+
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images, pil_images)
+
+    return {"status": "accepted", "job_id": job_id}
+
+@app.get("/api/v1/result/{job_id}")
+def get_result(job_id: str):
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
+    return JOBS[job_id]
