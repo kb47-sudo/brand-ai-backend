@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Zero-Tolerance Strict AI Authenticator", version="47.0")
+app = FastAPI(title="Zero-Tolerance Strict AI Authenticator Engine", version="48.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,13 +27,12 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Zero-Tolerance Strict AI Authenticator Engine v47.0",
+        "engine": "Zero-Tolerance Strict AI Authenticator Engine v48.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
-# 超厳格・ブランド別真贋鑑識マニュアル
 STRICT_AUTHENTICATION_SPECS = {
     "Louis Vuitton": """
 ・ロゴ打刻: 「LOUIS VUITTON PARIS」の「O」が完全な真円か。「N」の両端先端のシャープさ、刻印の底面平坦度。1つでもフォントが太かったり潰れていたら即異変判定。
@@ -73,14 +72,12 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 画像ミクロデジタル強調（輪郭・コントラスト・極細線強調）
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
             image.thumbnail((900, 900))
             
-            # コントラスト・シャープネス・エッジ強調処理
             image = ImageEnhance.Contrast(image).enhance(1.35)
             image = ImageEnhance.Sharpness(image).enhance(1.5)
             image = image.filter(ImageFilter.EDGE_ENHANCE_MORE)
@@ -99,7 +96,7 @@ async def authenticate(
 
     prompt = f"""
 あなたは日本のコメ兵・大黒屋・銀座ラシン・コメ兵等で長年真贋鑑識を担当してきた「ゼロ・トレランス（ゼロ容認）超厳格鑑定主任」です。
-提供された画像群（最大5部位）を顕微鏡レベルで精査し、0.1ミリの異変や違和感（フォントの滲み、角度ズレ、バリ、メッキの甘さ）も絶対に許さず、厳格に減点・弾いてJSON形式のみで出力してください。
+提供された画像群（最大5部位）を顕微鏡レベルで精査し、0.1ミリの異変や違和感（フォントの滲み、角度ズレ、バリ、メッキの甘さ）も絶対に許さず、厳格に減点・不審部位を提示してJSON形式のみで出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
@@ -108,44 +105,39 @@ async def authenticate(
 【ブランド別・超厳格チェック指針】
 {strict_spec}
 
-【ゼロ・トレランス判定ルール】
-1. 『overall_score』 / 『judgment』:
-   - 基準内判定を出す条件を極限まで厳格化してください。
-     ・98.0% 〜 100.0%: 基準内（1ミリの不審点もない完全な本物）
-     ・85.0% 〜 97.9%: 判定保留（微細な異変・高精巧コピーの懸念あり・目視精査推奨）
-     ・85.0% 未満: 基準外（明確な違和感・偽造品の疑い極めて大）
-   - 12のチェック項目のうち、1つでも『pass: false』がある場合、判定スコアは97.9%以下とし、絶対に「基準内」と判定しないでください（「判定保留」または「基準外」に弾くこと）。
+【ゼロ・トレランス判定＆不審箇所提示ルール】
+1. 『suspicious_points』 (※最重要追加):
+   - 画像内に少しでも不自然な点（例: 「ロゴ刻印の『O』の字の縦長感」「ジッパーのメッキ層の微小な粗さ」「シリアルコードBA2260の『2』の書体フォントズレ」など）があれば、具体的な懸念箇所のテキストを配列形式で抽出してください。
+   - 完璧な本物の場合は空の配列 `[]` を返してください。
 
-2. 『detected_model』:
-   - 正確な日本語モデル名・公式型番・解読できたシリアルを出力してください。
-
-3. 『message』:
-   - 鑑定理由を以下のプロ解説フォーマット（箇条書き）で詳細に記述してください（改行 \\n を使用）：
-     「・刻印・フォント精度: ○○○○」
-     「・シリアル・フォーマット適合度: ○○○○」
-     「・金具・ビス・メッキ研磨仕上げ: ○○○○」
-     「・縫製・コバ・素材表面の質感: ○○○○」
-
-4. 『details』（12大超精密チェックリスト）:
-   - 12項目について、少しでも異変があれば容赦なく『pass: false』を付与してください。
+2. 『overall_score』 / 『judgment』:
+   - 98.0% 〜 100.0%: 基準内（不審点ゼロの完全本物）
+   - 85.0% 〜 97.9%: 判定保留（不審点・違和感検知・要目視精査）
+   - 85.0% 未満: 基準外（明確な不整合・偽造品の懸念大）
+   - 12のチェック項目のうち、1つでも『pass: false』がある場合は絶対に「基準内」にせず、97.9%以下の「判定保留」または「基準外」に弾いてください。
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
   "detected_model": "ブランド名 正式ライン・製品名 (型番: XXXX / シリアル: XXXX)",
-  "overall_score": 98.5,
-  "judgment": "基準内",
-  "status_code": "PASS",
-  "message": "・刻印・フォント精度: ロゴ「O」の真円性、PARIS刻印の底面平坦度が公式基準と完全一致\\n・シリアル・フォーマット適合度: 製造国コードおよび年週打刻の打刻深さ・フォント適合\\n・金具・ビス・メッキ研磨仕上げ: ジッパー刻印のエッジ面の滑らかな面取り、メッキ密着感良好\\n・縫製・コバ・素材表面の質感: ステッチの15度斜め傾斜ピッチ、コバ塗料の透明感良好",
+  "overall_score": 92.0,
+  "judgment": "判定保留（要目視査定）",
+  "status_code": "REVIEW",
+  "message": "・刻印・フォント精度: ロゴ「O」の真円性にわずかな歪みを検知\\n・シリアル・フォーマット適合度: 製造国コードおよび年週打刻の打刻深さに不均一性あり\\n・金具・ビス・メッキ研磨仕上げ: ジッパー刻印のエッジ面に軽微なバリを検出\\n・縫製・コバ・素材表面の質感: ステッチピッチは概ね良好",
+  "suspicious_points": [
+    "ロゴ刻印: 「LOUIS VUITTON」の「O」が僅かに縦長形状（公式基準は完全な真円）",
+    "金具パーツ: ジッパーロゴの刻印内側に微小なめっき粗さを検出",
+    "シリアル打刻: 数字『2』の打ち刻み深度に左右の不均一性を確認"
+  ],
   "market_prices": {{
     "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "auction": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円"
   }},
   "details": [
-    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "pass": true}},
+    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "pass": false}},
     {{"name": "2. ®マーク・製造国刻印の凹み形状と底面平坦度", "pass": true}},
-    {{"name": "3. シリアル/製造番号の打刻書体・年週法則適合性", "pass": true}},
-    {{"name": "4. 金属パーツのエッジ面取り・メッキ層の均一性", "pass": true}},
+    {{"name": "3. シリアル/製造番号の打刻書体・年週法則適合性", "pass": false}},
+    {{"name": "4. 金属パーツのエッジ面取り・メッキ層の均一性", "pass": false}},
     {{"name": "5. ビス・ねじ頭のすり割り形状・溝の仕上げ状態", "pass": true}},
     {{"name": "6. ジッパー・スナップ金具の刻印・噛み合わせ", "pass": true}},
     {{"name": "7. ステッチ（縫い目）の目打ち傾斜角度・ピッチ", "pass": true}},
@@ -161,7 +153,6 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: Gemini API ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -174,7 +165,6 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: OpenRouter API ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -216,6 +206,7 @@ async def authenticate(
         "judgment": "判定保留（一時混雑）",
         "status_code": "REVIEW",
         "message": f"解析が一時的に混雑しています。再度査定ボタンを押してください: {str(last_err)}",
+        "suspicious_points": ["解析処理タイムアウトによる確認保留"],
         "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
         "details": [
             {"name": "1. ロゴフォントの真円性・文字間隔の正確性", "pass": False},
@@ -240,7 +231,6 @@ async def authenticate(
         clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
         result_data = json.loads(clean_json)
 
-        # プログラム側の安全トリガー（1つでもpass:falseがあれば98%未満・判定保留または基準外に強制ガード）
         if "details" in result_data and isinstance(result_data["details"], list):
             has_failed_item = any(item.get("pass") is False for item in result_data["details"])
             if has_failed_item:
