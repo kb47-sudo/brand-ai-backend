@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-Provider AI Fallback Engine", version="33.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="34.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v33.0",
+        "engine": "Multi-Provider AI Fallback System v34.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -47,15 +47,17 @@ async def authenticate(
 
     pil_images = []
     base64_images = []
+    
+    # 画像の高速・軽量化リサイズ処理
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((800, 800))
+            image.thumbnail((600, 600))  # 転送量削減と高速化のため600pxに最適化
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG")
+            image.save(buffered, format="JPEG", quality=75)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
@@ -99,7 +101,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- フェーズ1: Gemini API (メイン) ---
+    # --- フェーズ1: Gemini API ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -112,7 +114,7 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- フェーズ2: OpenRouter API (厳選・無料ビジョンモデル) ---
+    # --- フェーズ2: OpenRouter API ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -125,4 +127,49 @@ async def authenticate(
         }
         content_payload = [{"type": "text", "text": prompt}]
         for b64_img in base64_images:
-            content_payload.append
+            content_payload.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+            })
+
+        for or_model in openrouter_models:
+            try:
+                or_payload = {
+                    "model": or_model,
+                    "messages": [{"role": "user", "content": content_payload}]
+                }
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    if "choices" in res_json and len(res_json["choices"]) > 0:
+                        response_text = res_json["choices"][0]["message"]["content"].strip()
+                        break
+                last_err = f"OpenRouter ({res.status_code})"
+            except Exception as e:
+                last_err = f"OpenRouter Err: {str(e)}"
+
+    # デフォルトのフォールバック返却構造（フロント崩れ防止）
+    fallback_response = {
+        "detected_model": model_number or "自動特定失敗",
+        "overall_score": 75.0,
+        "judgment": "判定保留（一時混雑）",
+        "status_code": "REVIEW",
+        "message": f"解析が一時的に混雑しています。再度査定ボタンを押してください: {str(last_err)}",
+        "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
+        "details": [
+            {"name": "ロゴフォント・刻印配置の正確性", "pass": False},
+            {"name": "素材仕上げ・研磨・バリ処理の質感", "pass": False},
+            {"name": "シリアル/製造番号のフォーマット適合", "pass": False},
+            {"name": "細部構造・金具部品の基準一致", "pass": False}
+        ]
+    }
+
+    if not response_text:
+        return fallback_response
+
+    try:
+        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+        result_data = json.loads(clean_json)
+        return result_data
+    except Exception:
+        return fallback_response
