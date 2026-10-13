@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Night-optimized AI Authenticator Engine", version="60.0")
+app = FastAPI(title="Dynamic Visual Product Identification Engine", version="62.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Night-optimized AI Authenticator v60.0",
+        "engine": "Dynamic Visual Product Identification v62.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -45,58 +45,64 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 夜間混雑対策：画像を450pxに軽量化してAIの処理速度をアップ
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((450, 450))
+            image.thumbnail((600, 600))
             
             image = ImageEnhance.Sharpness(image).enhance(1.2)
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=70)
+            image.save(buffered, format="JPEG", quality=80)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から型番を精密自動特定）"
+    user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋等のプロ鑑識員です。
-提出された画像を鑑識し、絶対に余計な挨拶や指示文を出力せず、純粋なJSONオブジェクト（{{ }}）のみを出力してください。
+あなたは日本のコメ兵・大黒屋等のプロ鑑定士です。
+送信された部位写真群（最大5枚）を視覚的に解析し、画像に写っている実際の品物の【正確な日本語商品名・ライン名・推定公式型番】を画像から読み取って特定してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【鑑識＆出力ルール】
-1. 『suspicious_points』:
-   - 微小な不審点や気になる違和感があれば積極的に配列で抽出してください。不審点がなければ `[]` を返してください。
+【超重要：モデル名・型番特定ルール】
+1. 『detected_model』:
+   - 提供された画像全体の形状（ボディバッグ、ショルダー、財布、時計等）、素材（モノグラム・エクリプス、ダミエ、キャビアスキン等）、刻印文字（シリアルやRef番号）から、画像に写っている品物を正確に判別し、日本の流通名で出力してください。
+   - ポシェットではない品物をポシェットと誤認しないよう、製品の全体構造（形状）をしっかり視覚認識してください。
+   - 例: 「ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)」
+   - 例: 「シャネル マトラッセ25 チェーンショルダーバッグ (ライン: キャビアスキン / シリアル: 28******)」
+   - ※手入力補足型番がある場合はそれを組み込んでください。
 
-2. 『overall_score』 / 『judgment』:
+2. 『suspicious_points』:
+   - 画像の刻印、金具、縫製、素材感をプロ目線で精査し、気になる微小な違和感（打刻の浅さ、フォントのズレ、メッキの光沢ムラ等）があれば積極的に日本語配列で抽出してください。不審点が無ければ `[]` を返してください。
+
+3. 『overall_score』 / 『judgment』:
    - 違和感がほぼ無ければ「基準内（95〜98%）」、微小な違和感があれば「判定保留（85〜94%）」、明確な違和感があれば「不審あり（84%以下）」。
 
-3. 『market_prices』:
-   - 判定に関わらず、必ず本物（正規品）として流通した場合の日本国内の最新実勢相場を3つ（買取・フリマ・オク）出力すること。
+4. 『market_prices』:
+   - 判定結果に関わらず、特定したモデルが本物（正規品）として国内二次流通市場で取引された場合の最新相場（買取店・フリマ・オークションの3つ）を算出してください。
 
-4. 『details』:
-   - 視認できる項目のみ `"status": "PASS"` または `"status": "FAIL"`、写っていない部位は `"status": "UNCHECKED"` とすること。
+5. 『details』:
+   - 画像で実際に確認できる項目のみ `"status": "PASS"` または `"status": "FAIL"`。写っていない部位は `"status": "UNCHECKED"` とすること。
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
-  "detected_model": "ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)",
+  "detected_model": "画像から特定した正確な日本語ブランド・ライン・品名・型番",
   "overall_score": 95.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・刻印精度: 内部レザータグ刻印のフォントおよび配置が基準適合\\n・シリアル適合度: BA2260（フランス製）の打刻形式合致\\n・金具仕上げ: ファスナープルLV刻印の面取り・メッキ質感良好",
+  "message": "・刻印精度: 画像で確認できた刻印の解説\\n・シリアル適合度: シリアルの解読結果および適合性\\n・金具仕上げ: 金具の仕上げ状態",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "130,000円 ～ 155,000円",
-    "fleamarket": "165,000円 ～ 195,000円",
-    "auction": "150,000円 ～ 180,000円"
+    "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
+    "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
+    "auction": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円"
   }},
   "details": [
     {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
@@ -118,7 +124,6 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: OpenRouter API (7秒セーフティガード) ---
     if OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -142,8 +147,7 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                # 混雑モデルを7秒で見切りをつけて次のモデルへパス
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=7)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=12)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -155,7 +159,6 @@ async def authenticate(
             except Exception as e:
                 last_err = f"OpenRouter timeout ({or_model})"
 
-    # --- 2フェーズ: Gemini API (予備) ---
     if not response_text and GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -169,16 +172,16 @@ async def authenticate(
             last_err = f"Gemini Limit: {str(e)}"
 
     fallback_response = {
-        "detected_model": model_number or "ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336)",
-        "overall_score": 93.0,
+        "detected_model": model_number or f"{brand} {category} (解析画像よりモデル・型番特定中)",
+        "overall_score": 90.0,
         "judgment": "判定保留（要目視査定）",
         "status_code": "REVIEW",
-        "message": "・画像および刻印情報を総合照合中です。（夜間混雑モード）",
+        "message": "・画像および刻印情報を総合照合中です。",
         "suspicious_points": [],
         "market_prices": {
-            "buy_store": "130,000円 ～ 155,000円",
-            "fleamarket": "165,000円 ～ 195,000円",
-            "auction": "150,000円 ～ 180,000円"
+            "buy_store": "算出中",
+            "fleamarket": "算出中",
+            "auction": "算出中"
         },
         "details": [
             {"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"},
