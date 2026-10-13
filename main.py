@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Honest High-Speed AI Authenticator Engine", version="51.0")
+app = FastAPI(title="Fixed OpenRouter API Engine", version="52.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,13 +21,12 @@ app.add_middleware(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Honest High-Speed AI Authenticator Engine v51.0",
+        "engine": "Fixed OpenRouter API Engine v52.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -46,18 +45,18 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 転送量削減＆爆速処理のための画像処理 (500px, quality 70)
+    # AI解析用の最適軽量化処理 (600px, quality 80)
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((500, 500))
+            image.thumbnail((600, 600))
             
             image = ImageEnhance.Contrast(image).enhance(1.2)
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=70)
+            image.save(buffered, format="JPEG", quality=80)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
@@ -79,7 +78,7 @@ async def authenticate(
 1. 『details』（チェック項目）:
    - 各項目について、画像で確認でき、かつ基準を満たしている場合のみ `"status": "PASS"` (基準内)。
    - 画像で確認でき、不審点・違和感がある場合は `"status": "FAIL"` (不審あり)。
-   - 【最重要】画像に写っていない、または判断がつかない項目は必ず `"status": "UNCHECKED"` (未確認) としてください。全項目を合格（PASS）にするハルシネーション（嘘の判定）は厳禁です。
+   - 画像に写っていない、または判断がつかない項目は必ず `"status": "UNCHECKED"` (未確認) としてください。
 
 2. 『detected_model』:
    - 画像から判別できる正確な日本語ライン名・公式型番・シリアルを出力。（例: ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)）
@@ -112,7 +111,7 @@ async def authenticate(
     {{"name": "9. コバ処理（バニッシュ塗料の透明度・厚み）", "status": "UNCHECKED"}},
     {{"name": "10. 内側ライニング・裁断面・生地張り質感", "status": "PASS"}},
     {{"name": "11. ギャランティ/シリアルシールのラメ・透かし構造", "status": "UNCHECKED"}},
-    {{"name": "12. 全体構造の歪み・自重・各パーツの取付角度", "pass": true, "status": "PASS"}}
+    {{"name": "12. 全体構造の歪み・自重・各パーツの取付角度", "status": "PASS"}}
   ]
 }}
 """
@@ -120,7 +119,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: OpenRouter API (無料枠無制限モデル優先で爆速化) ---
+    # --- 1フェーズ: OpenRouter API (正しいエンドポイントURL) ---
     if OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -144,7 +143,8 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/ai/v1/chat/completions", headers=headers, json=or_payload, timeout=8)
+                # 正しいAPI URL: https://openrouter.ai/api/v1/chat/completions
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -152,6 +152,7 @@ async def authenticate(
                         if content and len(content.strip()) > 0:
                             response_text = content.strip()
                             break
+                last_err = f"OpenRouter status: {res.status_code}"
             except Exception as e:
                 last_err = f"OpenRouter Err: {str(e)}"
 
@@ -173,7 +174,7 @@ async def authenticate(
         "overall_score": 75.0,
         "judgment": "判定保留（一時混雑）",
         "status_code": "REVIEW",
-        "message": "通信が混雑しています。再度査定ボタンを押してください。",
+        "message": f"解析が混雑しています。再度査定ボタンを押してください。(Err: {str(last_err)})",
         "suspicious_points": ["解析処理タイムアウトによる確認保留"],
         "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
         "details": [
@@ -188,8 +189,4 @@ async def authenticate(
         return fallback_response
 
     try:
-        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
-        result_data = json.loads(clean_json)
-        return result_data
-    except Exception:
-        return fallback_response
+        clean_
