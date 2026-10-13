@@ -12,7 +12,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="113.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="115.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +31,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v113.0",
+        "engine": "Multi-AI Fallback Engine v115.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -43,7 +43,7 @@ def clean_old_jobs():
     for k in expired_keys:
         del JOBS[k]
 
-def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
+def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 20):
     try:
         json_bytes = json.dumps(data_dict).encode('utf-8')
         req = urllib.request.Request(url, data=json_bytes, headers=headers, method='POST')
@@ -65,7 +65,7 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
 def execute_multi_ai_analysis(prompt: str, base64_images: list):
     logs = []
 
-    # --- フェーズ 1: Gemini REST API (v1beta 適合) ---
+    # --- フェーズ 1: Gemini REST API ---
     if GEMINI_API_KEY and base64_images:
         for g_model in ["gemini-1.5-flash", "gemini-1.5-pro"]:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={GEMINI_API_KEY}"
@@ -82,10 +82,10 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
             
             payload = {
                 "contents": [{"parts": parts}],
-                "generationConfig": {"temperature": 0.2}
+                "generationConfig": {"temperature": 0.1}
             }
             
-            res_json, err = http_post_json(url, headers, payload, timeout=15)
+            res_json, err = http_post_json(url, headers, payload, timeout=20)
             if res_json and "candidates" in res_json and len(res_json["candidates"]) > 0:
                 cand = res_json["candidates"][0]
                 if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
@@ -94,7 +94,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                         return text.strip(), None
             logs.append(f"Gemini({g_model}): {err or 'Empty'}")
 
-    # --- フェーズ 2: OpenRouter API (100%無料の auto-router 指定) ---
+    # --- フェーズ 2: OpenRouter API ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -109,19 +109,19 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["openrouter/free", "google/gemini-2.0-flash-lite-001:free"]:
+        for or_model in ["google/gemini-2.0-flash-lite-001:free", "qwen/qwen-2-vl-72b-instruct:free"]:
             or_payload = {
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=15)
+            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=20)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- フェーズ 3: Groq API (現在利用可能な最新 Vision モデル) ---
+    # --- フェーズ 3: Groq API ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -135,53 +135,68 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
         
-        for groq_model in ["qwen/qwen3.8-27b", "meta-llama/llama-4-vision"]:
-            groq_payload = {
-                "model": groq_model,
-                "messages": [{"role": "user", "content": content_payload}]
-            }
-            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
-            if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
-                content = res_json["choices"][0]["message"]["content"]
-                if content and len(content.strip()) > 0:
-                    return content.strip(), None
-            logs.append(f"Groq({groq_model}): {err or 'Empty'}")
+        groq_payload = {
+            "model": "llama-3.2-11b-vision-instruct",
+            "messages": [{"role": "user", "content": content_payload}]
+        }
+        res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=15)
+        if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
+            content = res_json["choices"][0]["message"]["content"]
+            if content and len(content.strip()) > 0:
+                return content.strip(), None
+        logs.append(f"Groq: {err or 'Empty'}")
 
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list):
-    user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
+    user_hint = f"ユーザー手入力補足: {model_number}" if model_number else "ユーザー手入力補足: なし（画像から型番・正式名称・ライン名を完全自動判別すること）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋・銀座ラシン等のプロ鑑定士および買取相場アナリストです。
-送信された部位写真群を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSON形式でのみ出力してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン等の最高峰ブランド鑑定士および買取市場相場アナリストです。
+送信された複数枚の部位画像（外観、刻印、シリアル・製造番号、金具、内側等）を精密解析し、品物を厳格に特定してください。
 
-【対象ブランド】: {brand}
-【対象カテゴリ】: {category}
-【ヒント】: {user_hint}
+【指定ブランド】: {brand}
+【指定カテゴリ】: {category}
+【ヒント情報】: {user_hint}
 
-【超重要：厳格鑑識＆画像ダイレクト識別ルール】
-1. 『detected_model』: 画像（柄、形状、ロゴ刻印、シリアル印字等）を視覚的に直接読み取り、写っている実際の品名を正しい日本語（例: ルイ・ヴィトン ダミエ・エベヌ ジッピー・ウォレット 等）で特定してください。
-2. 『market_prices』: 日本国内の二次流通市場での適正相場をそれぞれ個別に試算してください。
-3. 『overall_score』 / 『judgment』: 根拠に基づいたリアルな一致率パーセンテージを出力してください。
-4. 『suspicious_points』: 気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。無ければ [] とすること。
-5. 『details』: 確認できる項目のみ "PASS" または "FAIL"。写っていない部位は "UNCHECKED" とすること。
+【超厳格判定ルール＆型番完全特定プロトコル】
+1. 『detected_model』:
+   - 画像に写っているモノグラム/ダミエ/エピ等のライン名、形状、シリアル刻印パターンから【正式型番（例: M44336, M60017, N41661 等）】を特定し、必ず「[型番: 型番コード] ブランド名 ライン名 正式品名」の形式で出力してください。型番が判定不可能な場合は「[型番: 不明] ブランド名 品名」としてください。
 
-【出力JSONフォーマット】
+2. 『market_prices』:
+   - 特定された型番および品物に基づき、日本国内の最新二次流通相場（日本円）を算出してください。
+     - buy_store: 買取店仕入れ相場（例: "50,000円 ～ 65,000円"）
+     - fleamarket: メルカリ・ラクマ販売相場（例: "68,000円 ～ 78,000円"）
+     - auction: ヤフオク落札相場（例: "58,000円 ～ 70,000円"）
+
+3. 『overall_score』 / 『judgment』:
+   - 画像内の刻印フォント、縫製、金具メッキ、素材感等から算出した本物一致率スコア（0.0〜100.0%）と判定ランク（"基準内" / "注意" / "基準外"）を出力してください。
+
+4. 『message』:
+   - 画像解析から得られたプロ鑑定士としての総評・レポート根拠を日本語の箇条書き（\n区切り）で詳細に記載してください。
+
+5. 『suspicious_points』:
+   - 画像で検知された違和感（刻印の歪み、フォント不適合、シリアル法則の不一致等）があれば配列で抽出。無ければ [] とすること。
+
+6. 『details』:
+   - 12個の多角チェック項目（ロゴ刻印、シリアル、金具、縫製等）に対し、画像で確認できた項目は "PASS" または "FAIL"、未確認画像は "UNCHECKED" とすること。
+
+【出力JSONフォーマット（必ずこの形式のJSONのみを出力）】
 {{
-  "detected_model": "ルイ・ヴィトン ダミエ ジッピー・ウォレット",
-  "overall_score": 95.0,
+  "detected_model": "[型番: M44336] ルイ・ヴィトン モノグラム ジッピー・ウォレット",
+  "overall_score": 96.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・刻印精度: 基準内\\n・シリアル適合度: 適合",
+  "message": "・型番特定: モノグラムライン・最新カードポケット構成よりM44336と特定\\n・刻印解析: France表記フォントおよび文字配置精度は基準内\\n・シリアル適合度: 製造年週と工場コードの整合性を確認",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "45,000円 ～ 55,000円",
-    "fleamarket": "60,000円 ～ 70,000円",
-    "auction": "50,000円 ～ 62,000円"
+    "buy_store": "55,000円 ～ 65,000円",
+    "fleamarket": "70,000円 ～ 82,000円",
+    "auction": "60,000円 ～ 72,000円"
   }},
   "details": [
-    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}}
+    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
+    {{"name": "2. シリアル/製造番号の規則性・フォント合致", "status": "PASS"}}
   ]
 }}
 """
@@ -231,11 +246,11 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((600, 600))
+            image.thumbnail((800, 800))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=75)
+            image.save(buffered, format="JPEG", quality=80)
             img_bytes = buffered.getvalue()
             
             base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
