@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Hyper-Precision Micro AI Authenticator", version="46.0")
+app = FastAPI(title="Zero-Tolerance Strict AI Authenticator", version="47.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,35 +27,35 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Hyper-Precision Micro AI Authenticator Engine v46.0",
+        "engine": "Zero-Tolerance Strict AI Authenticator Engine v47.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
-# 超精密真贋マニュアル
-DEEP_AUTHENTICATION_SPECS = {
+# 超厳格・ブランド別真贋鑑識マニュアル
+STRICT_AUTHENTICATION_SPECS = {
     "Louis Vuitton": """
-・ロゴ打刻: 「LOUIS VUITTON PARIS」の「O」が完全真円か、「L」の横棒の短さ、「S」の上半分の縮小バランス、刻印文字の底部底面の平坦さ。
-・シリアル/製造刻印: 2文字＋4桁数字の打刻深度とフォント形状。特に「1」の頭のフック感や「4」の上の開き。
-・縫製/ステッチ: 黄色いシーム糸の目打ち傾斜角度（約15度）、角部分の巻き込み縫いの目数。
-・コバ/ビス: ビスヘッドのLVロゴの盛り上がりと刻印凹みのシャープさ、コバ塗料の透明度と赤みの色合い。
+・ロゴ打刻: 「LOUIS VUITTON PARIS」の「O」が完全な真円か。「N」の両端先端のシャープさ、刻印の底面平坦度。1つでもフォントが太かったり潰れていたら即異変判定。
+・シリアル: 製造国アルファベット2文字と製造年週（1/3桁目が週、2/4桁目が年）の法則性適合。書体の打刻深さズレがあれば即異変判定。
+・縫製/コバ: 黄色ステッチの15度斜め傾斜目打ち、角のピッチ崩れ、コバ塗料のはみ出しや不透明感があれば即異変判定。
+・金具: ビスやジッパーのLVロゴエッジ面のバリ、粗いメッキ処理があれば即異変判定。
 """,
     "Rolex": """
-・王冠マーク: 5本の先端円形部分のサイズ均一性、基部の楕円線の細さ。
-・ダイアル印字: 文字盤インクのぷっくりとした立体感（シルクスクリーン印刷特有の盛り上がり）、針の側面研磨のバリの有無。
-・ルーレット刻印: ベゼル内周の「ROLEX」文字の「X」の交差線とシリアル数字の刻印深さ。
-・ガラス透かし: 6時位置のレーザー刻印王冠（ドットの離れ具合、肉眼では見えにくい微細ドット構造）。
+・王冠マーク: 5本の指の丸みバランス、基部楕円線の細さ。印刷滲みがあれば即異変判定。
+・ダイアル印字: インクの立体盛り上がり、針の側面バリ、インデックス位置ズレがあれば即異変判定。
+・ルーレット刻印: ベゼル内周の「ROLEX」文字の「X」交差部とシリアル数字の刻印深さ不均一は即異変判定。
+・ガラス透かし: 6時位置レーザー王冠のドット大きすぎや不自然な目立ちがあれば即異変判定。
 """,
     "CHANEL": """
-・CCマーク金具: 右上が上、左下が上という交差規則。金属のエッジが立ちすぎておらず滑らかな面取りがなされているか。
-・シール/カード: ゴールドラメの粒子サイズ不均一性、シリアルナンバーのフォント（特に「1」の足の有無、「0」の斜め線の有無）。
-・マトラッセ革: キルティングのステッチピッチ（1インチあたりの目数）と革の自然なふくらみ。
+・CC金具: 「右上が上、左下が上」の重なり法則から1ミリでも外れていたら即偽造品判定。
+・シール/カード: シリアルシールのラメ不均一、ココマーク透かし・切り込み欠如は即異変判定。
+・レザー: キルティングの1インチあたり目数不足、革の不自然な硬さは即異変判定。
 """,
     "HERMES": """
-・手縫いステッチ: サドルステッチ（2本針交差手縫い）特有の右上がり傾斜。ミシン縫いのような直線・平行感がないこと。
-・刻印: 箔押しの金銀の粒子密着度、職人マーク・年式刻印の押し圧による革のへこみ方。
-・金具: プレートのネジ頭がマイナスネジであること、カデナの自重と「HERMES」文字のフォント仕上げ。
+・サドルステッチ: 職人の手縫い特有の「右上がり斜め傾斜」。ミシン縫いのような平行・直線は即異変判定。
+・刻印: 箔押しの金銀密着度、職人マーク・年式刻印の押し圧不均一は即異変判定。
+・金具: マイナスネジ頭の溝仕上げ、プレート「HERMES-PARIS」刻印の線ブレは即異変判定。
 """
 }
 
@@ -73,70 +73,69 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 高度ミクロ画像前処理（輪郭強調＆局所解像度向上）
+    # 画像ミクロデジタル強調（輪郭・コントラスト・極細線強調）
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            
-            # 微細刻印読取用の解像度調整 (900px)
             image.thumbnail((900, 900))
             
-            # ミクロディテール強調（コントラスト、シャープネス、輪郭強調）
-            image = ImageEnhance.Contrast(image).enhance(1.3)
-            image = ImageEnhance.Sharpness(image).enhance(1.4)
-            image = image.filter(ImageFilter.EDGE_ENHANCE)
+            # コントラスト・シャープネス・エッジ強調処理
+            image = ImageEnhance.Contrast(image).enhance(1.35)
+            image = ImageEnhance.Sharpness(image).enhance(1.5)
+            image = image.filter(ImageFilter.EDGE_ENHANCE_MORE)
 
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=88)
+            image.save(buffered, format="JPEG", quality=90)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
     user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像解析により完全自動特定）"
-    deep_spec = DEEP_AUTHENTICATION_SPECS.get(brand, "・ロゴフォント、シリアル法則性、金具研磨、ステッチ、コバ塗りを極小ミクロレベルで鑑識すること。")
+    strict_spec = STRICT_AUTHENTICATION_SPECS.get(brand, "・ロゴフォント、シリアル法則、金具研磨、ステッチ、コバ塗りのわずかな異変も一切見落とさず厳格判定すること。")
 
     prompt = f"""
-あなたはコメ兵・大黒屋・銀座ラシン等の鑑定部門で数万点の真贋を鑑識してきた「顕微鏡レベルの超エキスパート鑑識官」です。
-提供された画像（最大5部位）をミクロ視点で厳格査定し、0.1mmレベルの微小な違和感や不整合も一切見逃さずに検証した上でJSON形式のみで出力してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン・コメ兵等で長年真贋鑑識を担当してきた「ゼロ・トレランス（ゼロ容認）超厳格鑑定主任」です。
+提供された画像群（最大5部位）を顕微鏡レベルで精査し、0.1ミリの異変や違和感（フォントの滲み、角度ズレ、バリ、メッキの甘さ）も絶対に許さず、厳格に減点・弾いてJSON形式のみで出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【ブランド別・ミクロ超詳細鑑識基準】
-{deep_spec}
+【ブランド別・超厳格チェック指針】
+{strict_spec}
 
-【厳格ネガティブ鑑識ルール】
-1. 『detected_model』:
-   - 正確な日本語モデル名・公式型番・解読できたシリアルを特定して出力してください。
+【ゼロ・トレランス判定ルール】
+1. 『overall_score』 / 『judgment』:
+   - 基準内判定を出す条件を極限まで厳格化してください。
+     ・98.0% 〜 100.0%: 基準内（1ミリの不審点もない完全な本物）
+     ・85.0% 〜 97.9%: 判定保留（微細な異変・高精巧コピーの懸念あり・目視精査推奨）
+     ・85.0% 未満: 基準外（明確な違和感・偽造品の疑い極めて大）
+   - 12のチェック項目のうち、1つでも『pass: false』がある場合、判定スコアは97.9%以下とし、絶対に「基準内」と判定しないでください（「判定保留」または「基準外」に弾くこと）。
 
-2. 『overall_score』 / 『judgment』:
-   - 判定基準を極限まで厳格化してください：
-     ・97.0% 〜 100.0%: 基準内（極めて高い本物精度）
-     ・88.0% 〜 96.9%: 判定保留（精巧スーパーコピーの疑いあり・要目視確認）
-     ・88.0% 未満: 基準外（偽造品の懸念大）
+2. 『detected_model』:
+   - 正確な日本語モデル名・公式型番・解読できたシリアルを出力してください。
 
 3. 『message』:
-   - 鑑識根拠を以下のプロ解説フォーマット（箇条書き）で詳細に作成してください（改行 \\n を使用）：
-     「・刻印・文字フォント: ○○○○」
+   - 鑑定理由を以下のプロ解説フォーマット（箇条書き）で詳細に記述してください（改行 \\n を使用）：
+     「・刻印・フォント精度: ○○○○」
      「・シリアル・フォーマット適合度: ○○○○」
-     「・金具・ビス・メッキ・研磨処理: ○○○○」
+     「・金具・ビス・メッキ研磨仕上げ: ○○○○」
      「・縫製・コバ・素材表面の質感: ○○○○」
 
 4. 『details』（12大超精密チェックリスト）:
-   - 12項目について、それぞれpass（true/false）を厳格評価してください。
+   - 12項目について、少しでも異変があれば容赦なく『pass: false』を付与してください。
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
   "detected_model": "ブランド名 正式ライン・製品名 (型番: XXXX / シリアル: XXXX)",
-  "overall_score": 98.0,
+  "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・刻印・文字フォント: ロゴ文字「O」の真円性、PARIS刻印の底面平坦度、フォント間隔が公式基準と完全一致\\n・シリアル・フォーマット適合度: 製造国コードおよび年週打刻のフォント深さとフォーマット完全整合\\n・金具・ビス・メッキ・研磨処理: ジッパー刻印のエッジ面の滑らかな面取り、メッキの密着感良好\\n・縫製・コバ・素材表面の質感: ステッチの斜め傾斜ピッチ、コバ塗料の透明感およびはみ出しなし",
+  "message": "・刻印・フォント精度: ロゴ「O」の真円性、PARIS刻印の底面平坦度が公式基準と完全一致\\n・シリアル・フォーマット適合度: 製造国コードおよび年週打刻の打刻深さ・フォント適合\\n・金具・ビス・メッキ研磨仕上げ: ジッパー刻印のエッジ面の滑らかな面取り、メッキ密着感良好\\n・縫製・コバ・素材表面の質感: ステッチの15度斜め傾斜ピッチ、コバ塗料の透明感良好",
   "market_prices": {{
     "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
@@ -240,6 +239,16 @@ async def authenticate(
     try:
         clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
         result_data = json.loads(clean_json)
+
+        # プログラム側の安全トリガー（1つでもpass:falseがあれば98%未満・判定保留または基準外に強制ガード）
+        if "details" in result_data and isinstance(result_data["details"], list):
+            has_failed_item = any(item.get("pass") is False for item in result_data["details"])
+            if has_failed_item:
+                if result_data.get("overall_score", 100) >= 98.0:
+                    result_data["overall_score"] = 92.0
+                if result_data.get("judgment") == "基準内":
+                    result_data["judgment"] = "判定保留（要目視査定）"
+
         return result_data
     except Exception:
         return fallback_response
