@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Balanced AI Authenticator & Valuation Engine", version="55.0")
+app = FastAPI(title="Balanced Precision AI Authenticator Engine", version="56.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Balanced AI Authenticator v55.0",
+        "engine": "Balanced Precision AI Authenticator v56.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -51,8 +51,8 @@ async def authenticate(
             image = Image.open(io.BytesIO(contents)).convert('RGB')
             image.thumbnail((600, 600))
             
-            # 過度なコントラスト強調を抑え、自然な写りを再現
-            image = ImageEnhance.Contrast(image).enhance(1.1)
+            # 適度なシャープネスで刻印の判別度を最適化
+            image = ImageEnhance.Sharpness(image).enhance(1.2)
             pil_images.append(image)
 
             buffered = io.BytesIO()
@@ -65,28 +65,28 @@ async def authenticate(
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から型番を精密自動特定）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋等のプロ査定士です。
-送信された画像を客観的・標準的なプロ目線で査定し、正確なJSON形式のみで出力してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン等の熟練プロ査定士です。
+送信された画像を現実的かつ客観的なプロ目線で精密鑑識し、JSON形式でのみ出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【査定命令】
+【鑑識バランスルール】
 1. 『overall_score』 / 『judgment』:
-   - 写真の光の反射や角度によるわずかな影を過剰に「偽物の歪み」と誤認しないでください。
-   - 明らかな偽造品（チープな刻印・文字違い等）でない限り、標準的な状態であれば「基準内（90〜98%）」として公正に判定してください。
+   - スマホ撮影の反射・影・ピンボケによる写りの粗さは「写真上の影響」として正しく考慮し、無意味に過剰減点しないでください。
+   - ただし、文字フォントの明確な違い、シリアル番号法則の矛盾、金属のエッジ成形不良など、真贋に関わる構造的違和感がある場合は「判定保留（85〜94%）」または「不審あり（84%以下）」とし、懸念部位を明確に提示してください。
+   - 明らかな違和感がなく、正規品の仕様を満たしている場合は「基準内（95〜99%）」と判定してください。
 
-2. 『market_prices』 (最重要):
-   - **仮に真贋スコアが低く出た場合や判定保留の場合でも、必ず「本物（正規品）として市場流通した場合の最新相場（日本国内）」を算出してください。**
-   - 「査定不可」や「算出不能」と出力することは固く禁止します。
-   - 例（ディスカバリー・バムバッグPM M44336の場合）:
-     "buy_store": "130,000円 ～ 155,000円",
-     "fleamarket": "165,000円 ～ 195,000円",
-     "auction": "150,000円 ～ 180,000円"
+2. 『suspicious_points』:
+   - 明確な不審点や注意すべき微小な違和感がある場合のみ、箇条書きで具体的に抽出してください（例: 「刻印『O』のフォントがやや横長」「シリアルBA2260の打刻が浅い」等）。不審点がなければ `[]` を返してください。
 
-3. 『details』:
-   - 写真で現実に確認できる項目のみ `"status": "PASS"` または `"status": "FAIL"` を付け、写っていない部位は必ず `"status": "UNCHECKED"` としてください。
+3. 『market_prices』 (最重要・常時出力):
+   - **判定結果が『基準内』『判定保留』『不審あり』のどれであっても、必ず「本物（正規品）として流通した場合の日本国内の最新実勢相場」を出力してください。**
+   - 「算出不能」や「査定不可」などの出力は厳禁です。
+
+4. 『details』:
+   - 画像で実際に確認できる部位のみ `"status": "PASS"` または `"status": "FAIL"` とし、画像に写っていない・判定不能な部位は必ず `"status": "UNCHECKED"` としてください。
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
@@ -94,7 +94,7 @@ async def authenticate(
   "overall_score": 96.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・刻印精度: 刻印フォントおよび配置が標準基準に合致\\n・シリアル適合度: 法人製造刻印のフォーマット適合\\n・金具仕上げ: ファスナープル・引き手の質感良好",
+  "message": "・刻印精度: レザータグ刻印のフォントおよび打刻配置が基準適合\\n・シリアル適合度: フランス製BA2260コードの打刻法則適合\\n・金具仕上げ: ジッパープル・LV刻印の面取り状態良好",
   "suspicious_points": [],
   "market_prices": {{
     "buy_store": "130,000円 ～ 155,000円",
