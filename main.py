@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Stable Async AI Authenticator Engine", version="66.0")
+app = FastAPI(title="Gemini-First Resilient AI Authenticator Engine", version="68.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +22,7 @@ app.add_middleware(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 JOBS = {}
 
@@ -29,9 +30,10 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Stable Async AI Authenticator v66.0",
+        "engine": "Gemini-First Resilient AI Authenticator v68.0",
+        "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
-        "gemini_active": bool(GEMINI_API_KEY)
+        "groq_active": bool(GROQ_API_KEY)
     }
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
@@ -96,11 +98,26 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    if OPENROUTER_API_KEY:
+    # --- 【最優先】第1フェーズ: Google Gemini API (最高精度の本命モデル) ---
+    if GEMINI_API_KEY:
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            res = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[prompt] + pil_images,
+            )
+            if res and res.text:
+                response_text = res.text.strip()
+        except Exception:
+            # Geminiが制限（1日20回上限等）にかかった場合は静かに次のフェーズへ移行
+            pass
+
+    # --- 第2フェーズ: OpenRouter API (Gemini制限時の自動フォールバック) ---
+    if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
-            "google/gemini-2.0-flash-exp:free",
             "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "openrouter/free"
+            "qwen/qwen-2-vl-72b-instruct:free",
+            "google/gemini-2.0-flash-exp:free"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -119,7 +136,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=30)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -130,15 +147,32 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             except Exception:
                 continue
 
-    if not response_text and GEMINI_API_KEY:
+    # --- 第3フェーズ: Groq API (最終バックアップ) ---
+    if not response_text and GROQ_API_KEY:
         try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            res = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=[prompt] + pil_images,
-            )
-            if res and res.text:
-                response_text = res.text.strip()
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            content_payload = [{"type": "text", "text": prompt}]
+            for b64_img in base64_images:
+                content_payload.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                })
+
+            groq_payload = {
+                "model": "llama-3.2-11b-vision-preview",
+                "messages": [{"role": "user", "content": content_payload}],
+                "temperature": 0.2
+            }
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=15)
+            if res.status_code == 200:
+                res_json = res.json()
+                if "choices" in res_json and len(res_json["choices"]) > 0:
+                    content = res_json["choices"][0]["message"]["content"]
+                    if content and len(content.strip()) > 0:
+                        response_text = content.strip()
         except Exception:
             pass
 
@@ -154,7 +188,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             JOBS[job_id] = {"status": "error", "message": f"パースエラー: {str(e)}"}
             return
 
-    JOBS[job_id] = {"status": "error", "message": "全AIモデルが混雑中です。時間を置いて再度お試しください。"}
+    JOBS[job_id] = {"status": "error", "message": "API制限および全モデル混雑のため解析を完了できませんでした。少し時間を置いてお試しください。"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
