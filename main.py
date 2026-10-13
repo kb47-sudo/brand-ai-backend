@@ -11,7 +11,7 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
-app = FastAPI(title="Gemini Fully Compatible Authenticator Engine", version="85.0")
+app = FastAPI(title="Gemini 2.0 Flash Verified Engine", version="86.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Fully Compatible Authenticator v85.0",
+        "engine": "Gemini 2.0 Flash Verified v86.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -88,21 +88,20 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # 部位写真群をバイナリPartとして正しく結合
-        parts = []
+        # 画像パートの生成
+        image_parts = []
         for img_bytes in raw_bytes_list:
-            parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
-        parts.append(types.Part.from_text(text=prompt))
+            image_parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
 
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.2
         )
 
-        # モデル名を正式なエンドポイント文字列で指定
+        # 最も安定したコンテンツ渡しの配列形式
         res = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=parts,
+            model='gemini-2.0-flash',
+            contents=[prompt] + image_parts,
             config=config
         )
 
@@ -137,34 +136,4 @@ async def authenticate(
     files: List[UploadFile] = File(...)
 ):
     if not files or len(files) < 1:
-        raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
-
-    raw_bytes_list = []
-    
-    for file in files:
-        contents = await file.read()
-        try:
-            image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((500, 500))
-            image = ImageEnhance.Sharpness(image).enhance(1.2)
-
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=75)
-            raw_bytes_list.append(buffered.getvalue())
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
-
-    clean_old_jobs()
-    job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
-
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list)
-
-    return {"status": "accepted", "job_id": job_id}
-
-@app.get("/api/v1/result/{job_id}")
-def get_result(job_id: str):
-    clean_old_jobs()
-    if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
-    return JOBS[job_id]
+        raise HTTPException(status_code=4
