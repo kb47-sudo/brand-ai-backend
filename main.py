@@ -4,13 +4,13 @@ import json
 import re
 import base64
 import requests
-from PIL import Image
+from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="5-Slot Multi-Vision AI Authenticator Engine", version="43.0")
+app = FastAPI(title="Pro Precision AI Authenticator Engine", version="44.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,11 +27,34 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "5-Slot Multi-Vision AI Authenticator Engine v43.0",
+        "engine": "Pro Precision AI Authenticator Engine v44.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
+
+# ブランドごとのプロ鑑識チェック項目
+BRAND_SPECIAL_INSTRUCTIONS = {
+    "Louis Vuitton": """
+・ロゴ刻印: 「LOUIS VUITTON PARIS」の「O」が完全な真円か、Rマークの位置、刻印の彫り深さとフォント間隔。
+・シリアル: 製造国アルファベット2文字と製造年週（数字4桁）のフォーマット整合性。
+・キャンバス/レザー: モノグラム/ダミエの目合わせ、エピ/タイガの型押しシボ感。
+""",
+    "Rolex": """
+・文字盤: クラウンロゴの立体感・バランス、インデックスの研磨仕上げ、文字印字の立ち上がり・滲み有無。
+・刻印: 6時位置ルーレット刻印（ROLEX文字とシリアル）、ラグ間リファレンス/シリアル刻印の深さ。
+・ブレス/バックル: 王冠マークのエッジ・立体刻印、クラスプコード、ブレスのガタつき。
+""",
+    "CHANEL": """
+・ロゴ/金銀箔押し: 「CHANEL」刻印のCの切り欠き角度（30度）、金箔・銀箔の剥がれや潰れ具合。
+・内部シール/カード: シリアルシールのココマーク・ラメ散り・切り込み・ゴールドライン。
+・金具/チェーン: ココマーク金具の右上が上・左下が上の重なり法則、金具のメッキ厚と自重。
+""",
+    "HERMES": """
+・ステッチ: 職人による手縫い（サドルステッチ）特有の右上がり傾斜と糸の締め込み具合。
+・刻印: 職人イニシャル・製造年記号刻印の押し深さ、金具の「HERMES-PARIS」刻印のシャープさ。
+"""
+}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -47,49 +70,70 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
+    # 画像前処理（シャープネス＆コントラスト強調で微小な刻印をAIに捉えさせる）
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
+            image.thumbnail((700, 700))
+            
+            # コントラストとシャープネスを適度に強調
+            enhancer_c = ImageEnhance.Contrast(image)
+            image = enhancer_c.enhance(1.15)
+            enhancer_s = ImageEnhance.Sharpness(image)
+            image = enhancer_s.enhance(1.2)
+
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=75)
+            image.save(buffered, format="JPEG", quality=80)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像解析により完全自動特定）"
+    user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像から型番を完全自動特定すること）"
+    brand_rule = BRAND_SPECIAL_INSTRUCTIONS.get(brand, "・ロゴフォント、シリアルフォーマット、金属研磨、素材の質感を精密検証すること。")
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋等のプロ鑑定士です。
-送信された画像群（最大5枚：表面、裏面、刻印、シリアル、金具）を多角的に照合し、正確な製品名・公式型番・製造番号（シリアル）・市場相場を特定してJSON形式でのみ出力してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン等で数万点の真贋を鑑識してきた超一流の専任査定部長です。
+提供された画像群（最大5部位）をプロ鑑識官の眼で厳格精査し、正確なJSON形式のみで出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【絶対査定ルール】
+【ブランド別・極秘鑑識ルール】
+{brand_rule}
+
+【厳格鑑定ルール】
 1. 『detected_model』:
-   - 表面デザインだけでなく、**裏面（背面ポケット、ベルトストラップ形状、マチ構造）**の画像を精査し、類似モデルと誤認せずに正確な商品名と型番を決定してください。
-   - ユーザー指定型番がある場合はそれを最優先し、正確な日本語ライン名と統合してください。
-   - 例: 「ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)」
+   - 画像の表面・裏面・金具・シリアルを総合照合し、正確な日本語モデル名・公式型番・解読できたシリアルを出力してください。
+   - 手入力型番がある場合はそれを最優先して統合してください。
 
-2. 『market_prices』:
-   - 特定された製品の日本国内中古市場（美品〜並品）におけるリアルな実勢取引価格を算出して出力。
-   - 買取店相場（仕入れ）、フリマ相場（メルカリ等）、オークション相場（ヤフオク等）をそれぞれ提示。
+2. 『overall_score』 / 『judgment』:
+   - スコア判定基準を厳格化してください。
+     ・95.0% 〜 100.0%: 基準内（本物判定）
+     ・80.0% 〜 94.9%: 判定保留（目視推奨 / N級精巧コピーの疑いあり）
+     ・80.0% 未満: 基準外（偽造品の懸念あり）
 
-3. 『overall_score』 / 『judgment』 / 『message』:
-   - ロゴ刻印（文字間隔・Rマーク）、シリアルコードの整合性、裏面構造、金具仕上げから総合判定（0.0〜100.0）とプロ目線の解説を作成。
+3. 『message』:
+   - 判定の根拠を、必ず以下の3〜4行の箇条書き形式（プロ目線）でわかりやすく解説してください。
+     「・刻印: ○○○○」
+     「・シリアル: ○○○○」
+     「・金具/パーツ: ○○○○」
+     「・素材/構造: ○○○○」
+
+4. 『market_prices』:
+   - 該当製品の日本国内中古市場（美品コンディション）における最新実勢価格帯（買取店・フリマ・オークション）を正確に出力してください。
 
 【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
-  "detected_model": "ブランド名 ライン・製品名 (型番: XXXX / シリアル: XXXX)",
-  "overall_score": 95.0,
+  "detected_model": "ブランド名 正式ライン・製品名 (型番: XXXX / シリアル: XXXX)",
+  "overall_score": 96.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "表面・裏面構造、刻印、シリアルフォーマットに基づく詳細鑑定解説",
+  "message": "・刻印: フォント・位置・押し深さ共に公式基準と完全一致\\n・シリアル: 製造国・製造年週コードのフォーマット適合\\n・金具: ジッパー/ロゴのエッジ処理およびメッキ質感が極めて良好\\n・素材: 生地目・アライメントに歪みなし",
   "market_prices": {{
     "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
