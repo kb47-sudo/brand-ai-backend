@@ -3,7 +3,6 @@ import io
 import json
 import re
 import uuid
-import base64
 import time
 from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
@@ -12,7 +11,7 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
-app = FastAPI(title="Gemini 2.0 Flash Fixed Authenticator Engine", version="84.0")
+app = FastAPI(title="Gemini Fully Compatible Authenticator Engine", version="85.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +27,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini 2.0 Flash Fixed Authenticator v84.0",
+        "engine": "Gemini Fully Compatible Authenticator v85.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -88,18 +87,22 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        contents = [prompt]
+        
+        # 部位写真群をバイナリPartとして正しく結合
+        parts = []
         for img_bytes in raw_bytes_list:
-            contents.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+            parts.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+        parts.append(types.Part.from_text(text=prompt))
 
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.2
         )
 
+        # モデル名を正式なエンドポイント文字列で指定
         res = client.models.generate_content(
-            model='gemini-2.0-flash',
-            contents=contents,
+            model="gemini-2.0-flash",
+            contents=parts,
             config=config
         )
 
