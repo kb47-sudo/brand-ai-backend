@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="106.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="107.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v106.0",
+        "engine": "Multi-AI Fallback Engine v107.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -57,7 +57,7 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
     return None
 
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
-    # --- 第1フェーズ: Gemini API (実稼働モデル試行) ---
+    # --- 第1フェーズ: Gemini API (最新推奨モデル) ---
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -65,10 +65,11 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "temperature": 0.2,
                 "response_mime_type": "application/json",
             }
+            # 現在利用可能な主要モデル
             gemini_candidate_models = [
-                "gemini-1.5-flash",
-                "gemini-1.5-pro",
-                "gemini-2.0-flash-exp"
+                "gemini-2.0-flash",
+                "gemini-2.5-flash",
+                "gemini-1.5-flash-latest"
             ]
             for g_model in gemini_candidate_models:
                 try:
@@ -87,9 +88,9 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
     # --- 第2フェーズ: OpenRouter API ---
     if OPENROUTER_API_KEY and base64_images:
         openrouter_models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "qwen/qwen-2-vl-72b-instruct:free"
+            "google/gemini-2.0-flash-001",
+            "meta-llama/llama-3.2-11b-vision-instruct",
+            "qwen/qwen-2-vl-72b-instruct"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -113,7 +114,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
 
-    # --- 第3フェーズ: Groq API ---
+    # --- 第3フェーズ: Groq API (正式ビジョンモデル) ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -126,7 +127,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
         groq_payload = {
-            "model": "llama-3.2-11b-vision-preview",
+            "model": "llama-3.2-11b-vision-instruct",
             "messages": [{"role": "user", "content": content_payload}]
         }
         res_json = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
