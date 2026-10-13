@@ -4,13 +4,13 @@ import json
 import re
 import base64
 import requests
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageFilter
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Pro Precision AI Authenticator Engine", version="44.0")
+app = FastAPI(title="Ultra-Precision AI Authenticator Engine", version="45.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,32 +27,39 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Precision AI Authenticator Engine v44.0",
+        "engine": "Ultra-Precision AI Authenticator Engine v45.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
-# ブランドごとのプロ鑑識チェック項目
-BRAND_SPECIAL_INSTRUCTIONS = {
+# ブランド別・超高精度真贋マニュアル
+BRAND_DEEP_INSTRUCTIONS = {
     "Louis Vuitton": """
-・ロゴ刻印: 「LOUIS VUITTON PARIS」の「O」が完全な真円か、Rマークの位置、刻印の彫り深さとフォント間隔。
-・シリアル: 製造国アルファベット2文字と製造年週（数字4桁）のフォーマット整合性。
-・キャンバス/レザー: モノグラム/ダミエの目合わせ、エピ/タイガの型押しシボ感。
+・刻印: 「LOUIS VUITTON PARIS」の「O」が縦長ではなく完全な真円か。「N」の両端がシャープか。「made in France」等のフォント深さが均一か。
+・シリアル: 製造国コード（AA, AR, BA, FL, MB, SP, TH, VI等）と製造年週（1/3桁目が週、2/4桁目が年）の法則性が正確か。
+・金具/ジッパー: LVロゴの角が鋭利に面取りされているか。メッキに粗い気泡やはげがないか。
+・生地/コバ: モノグラム/ダミエの整列アライメント、コバ（バニッシュ）塗りの厚みとはみ出し有無。
 """,
     "Rolex": """
-・文字盤: クラウンロゴの立体感・バランス、インデックスの研磨仕上げ、文字印字の立ち上がり・滲み有無。
-・刻印: 6時位置ルーレット刻印（ROLEX文字とシリアル）、ラグ間リファレンス/シリアル刻印の深さ。
-・ブレス/バックル: 王冠マークのエッジ・立体刻印、クラスプコード、ブレスのガタつき。
+・文字盤: クラウンマーク（王冠）の5本の指の先端と基部のバランス、ROLEX文字の立体的なインク盛り、インデックスの仕上げ。
+・刻印: 6時位置インナーリング（ルーレット）の「ROLEX」刻印およびシリアル、ケースラグ間のRef/シリアル刻印の深さ。
+・王冠透かし: 6時位置サファイアガラスの王冠レーザー刻印（小さく緻密か）。
+・ブレス/バックル: クラスプ裏の王冠マークの立体感、刻印の粗さ、ブレスの隙間・ガタつき。
 """,
     "CHANEL": """
-・ロゴ/金銀箔押し: 「CHANEL」刻印のCの切り欠き角度（30度）、金箔・銀箔の剥がれや潰れ具合。
-・内部シール/カード: シリアルシールのココマーク・ラメ散り・切り込み・ゴールドライン。
-・金具/チェーン: ココマーク金具の右上が上・左下が上の重なり法則、金具のメッキ厚と自重。
+・ロゴ刻印: 「CHANEL」のCの切り欠き角度（30度）、文字の厚みと箔押し（ゴールド/シルバー）の歪み。
+・ブティックシール/カード: シリアルシールのココマーク・ゴールドラメの散り具合・透かし・切り込みの有無。
+・CC金具: 右上のココマークが上、左下のココマークが上という重なり法則、金具の自重と質感。
 """,
     "HERMES": """
-・ステッチ: 職人による手縫い（サドルステッチ）特有の右上がり傾斜と糸の締め込み具合。
-・刻印: 職人イニシャル・製造年記号刻印の押し深さ、金具の「HERMES-PARIS」刻印のシャープさ。
+・ステッチ: 職人の手縫い（サドルステッチ）特有の右上がり斜め目打ち。糸のピッチと締め込みの均一性。
+・刻印: 「HERMES PARIS MADE IN FRANCE」の職人イニシャル・製造年記号刻印（□や○、近年はアルファベット単体）の打刻状態。
+・金具: カデナ・底鋲・プレートのメッキの深み、「HERMES-PARIS」刻印のエッジ。
+""",
+    "GUCCI": """
+・ロゴ刻印: 「GUCCI made in italy」のGとCの丸み、Rマークの円の大きさ。
+・シリアル: 背面タグ裏の数字刻印（上が型番、下が工場コード）の独特な打刻フォント（数字の跳ね）。
 """
 }
 
@@ -70,80 +77,85 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 画像前処理（シャープネス＆コントラスト強調で微小な刻印をAIに捉えさせる）
+    # 画像デジタル高度処理（輪郭エッジ・コントラスト自動調整）
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((700, 700))
+            image.thumbnail((800, 800))
             
-            # コントラストとシャープネスを適度に強調
-            enhancer_c = ImageEnhance.Contrast(image)
-            image = enhancer_c.enhance(1.15)
-            enhancer_s = ImageEnhance.Sharpness(image)
-            image = enhancer_s.enhance(1.2)
+            # コントラスト＆シャープネス（輪郭抽出強化）
+            image = ImageEnhance.Contrast(image).enhance(1.25)
+            image = ImageEnhance.Sharpness(image).enhance(1.3)
+            image = image.filter(ImageFilter.DETAIL)
 
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=80)
+            image.save(buffered, format="JPEG", quality=85)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像から型番を完全自動特定すること）"
-    brand_rule = BRAND_SPECIAL_INSTRUCTIONS.get(brand, "・ロゴフォント、シリアルフォーマット、金属研磨、素材の質感を精密検証すること。")
+    user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像解析により完全自動特定）"
+    deep_rule = BRAND_DEEP_INSTRUCTIONS.get(brand, "・ロゴフォント精度、シリアル法則性、金具研磨、ステッチ、コバ塗りを極小レベルで鑑識すること。")
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋・銀座ラシン等で数万点の真贋を鑑識してきた超一流の専任査定部長です。
-提供された画像群（最大5部位）をプロ鑑識官の眼で厳格精査し、正確なJSON形式のみで出力してください。
+あなたは日本のコメ兵・大黒屋・Ginza Rasin・ブランドオフ等で長年真贋鑑識を担当してきた「最高峰ブランド鑑定鑑識官」です。
+提供された画像（最大5部位）を顕微鏡レベルの厳しさで査定し、不審点・違和感を徹底的に検証した上でJSON形式のみで出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【ブランド別・極秘鑑識ルール】
-{brand_rule}
+【ブランド別・極秘鑑識基準】
+{deep_rule}
 
-【厳格鑑定ルール】
+【絶対鑑定ルール】
 1. 『detected_model』:
-   - 画像の表面・裏面・金具・シリアルを総合照合し、正確な日本語モデル名・公式型番・解読できたシリアルを出力してください。
-   - 手入力型番がある場合はそれを最優先して統合してください。
+   - 表面・裏面構造・刻印・金具・シリアルから製品名・公式型番・解読できたシリアルをピンポイントで特定してください。
+   - 手入力型番がある場合は第一優先として統合してください。
 
 2. 『overall_score』 / 『judgment』:
-   - スコア判定基準を厳格化してください。
-     ・95.0% 〜 100.0%: 基準内（本物判定）
-     ・80.0% 〜 94.9%: 判定保留（目視推奨 / N級精巧コピーの疑いあり）
-     ・80.0% 未満: 基準外（偽造品の懸念あり）
+   - 真贋判定閾値を厳格化してください：
+     ・96.0% 〜 100.0%: 基準内（本物確定）
+     ・85.0% 〜 95.9%: 判定保留（精巧N級コピーの懸念・目視査定推奨）
+     ・85.0% 未満: 基準外（偽造品の疑い極めて大）
 
 3. 『message』:
-   - 判定の根拠を、必ず以下の3〜4行の箇条書き形式（プロ目線）でわかりやすく解説してください。
-     「・刻印: ○○○○」
-     「・シリアル: ○○○○」
-     「・金具/パーツ: ○○○○」
-     「・素材/構造: ○○○○」
+   - 鑑識結果の根拠を、以下の形式で詳細にプロの解説を作成してください（改行 \\n を使用）：
+     「・刻印フォント: ○○○○」
+     「・シリアル適合性: ○○○○」
+     「・金具/ビス仕上げ: ○○○○」
+     「・素材/縫製/コバ: ○○○○」
 
-4. 『market_prices』:
-   - 該当製品の日本国内中古市場（美品コンディション）における最新実勢価格帯（買取店・フリマ・オークション）を正確に出力してください。
+4. 『details』（10大詳細チェックリスト）:
+   - 以下の10項目について、それぞれpass（true/false）を評価してください。
 
-【出力JSONフォーマット（JSONコードブロックのみ）】
+【出力JSONフォーマット（JSONのみ出力）】
 {{
   "detected_model": "ブランド名 正式ライン・製品名 (型番: XXXX / シリアル: XXXX)",
-  "overall_score": 96.0,
+  "overall_score": 97.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・刻印: フォント・位置・押し深さ共に公式基準と完全一致\\n・シリアル: 製造国・製造年週コードのフォーマット適合\\n・金具: ジッパー/ロゴのエッジ処理およびメッキ質感が極めて良好\\n・素材: 生地目・アライメントに歪みなし",
+  "message": "・刻印フォント: ロゴ「O」の真円性、PARIS文字の刻み深さが公式基準に合致\\n・シリアル適合性: 製造国コードおよび年週番号のフォーマット適合\\n・金具/ビス仕上げ: ジッパーロゴのエッジ処理、メッキ厚が良好\\n・素材/縫製/コバ: コバ塗りの厚みが均一でステッチピッチに崩れなし",
   "market_prices": {{
     "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "auction": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円"
   }},
   "details": [
-    {{"name": "ロゴフォント・刻印配置の正確性", "pass": true}},
-    {{"name": "素材仕上げ・研磨・バリ処理の質感", "pass": true}},
-    {{"name": "シリアル/製造番号のフォーマット適合", "pass": true}},
-    {{"name": "細部構造・金具部品の基準一致", "pass": true}}
+    {{"name": "1. ブランドロゴフォント・文字間隔の正確性", "pass": true}},
+    {{"name": "2. ®マーク・製造国刻印の深さと形状", "pass": true}},
+    {{"name": "3. シリアル/製造番号のフォーマット適合", "pass": true}},
+    {{"name": "4. 金属パーツの研磨・面取り・メッキ質感", "pass": true}},
+    {{"name": "5. ビス・ねじ頭の形状・溝の仕上げ", "pass": true}},
+    {{"name": "6. ジッパー・スナップ金具の刻印・エッジ", "pass": true}},
+    {{"name": "7. ステッチ（縫い目）のピッチ・傾斜処理", "pass": true}},
+    {{"name": "8. 素材（レザー/キャンバス）の目・シボ感", "pass": true}},
+    {{"name": "9. コバ処理（塗料厚み・はみ出し・色合い）", "pass": true}},
+    {{"name": "10. 内側ライニング・生地・シールの質感", "pass": true}}
   ]
 }}
 """
@@ -188,7 +200,7 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=22)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -206,21 +218,4 @@ async def authenticate(
         "judgment": "判定保留（一時混雑）",
         "status_code": "REVIEW",
         "message": f"解析が一時的に混雑しています。再度査定ボタンを押してください: {str(last_err)}",
-        "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
-        "details": [
-            {"name": "ロゴフォント・刻印配置の正確性", "pass": False},
-            {"name": "素材仕上げ・研磨・バリ処理の質感", "pass": False},
-            {"name": "シリアル/製造番号のフォーマット適合", "pass": False},
-            {"name": "細部構造・金具部品の基準一致", "pass": False}
-        ]
-    }
-
-    if not response_text:
-        return fallback_response
-
-    try:
-        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
-        result_data = json.loads(clean_json)
-        return result_data
-    except Exception:
-        return fallback_response
+        "market_prices": {"buy_store": "算出不能", "
