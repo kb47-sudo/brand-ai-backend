@@ -9,9 +9,9 @@ from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-from google import genai
+import google.generativeai as genai
 
-app = FastAPI(title="Seamless Resilient AI Authenticator Engine", version="70.0")
+app = FastAPI(title="Gemini Direct Resilient AI Authenticator Engine", version="71.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,13 +24,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
 JOBS = {}
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Seamless Resilient AI Authenticator v70.0",
+        "engine": "Gemini Direct Resilient AI Authenticator v71.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -102,14 +105,11 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    # --- 第1フェーズ: Google Gemini API ---
+    # --- 第1フェーズ: Google Gemini API (安定版モデル) ---
     if GEMINI_API_KEY:
         try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            res = client.models.generate_content(
-                model='gemini-2.0-flash',
-                contents=[prompt] + pil_images,
-            )
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            res = model.generate_content([prompt] + pil_images)
             if res and res.text:
                 response_text = res.text.strip()
         except Exception:
@@ -139,7 +139,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -191,7 +191,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             JOBS[job_id] = {"status": "error", "message": f"パースエラー: {str(e)}"}
             return
 
-    JOBS[job_id] = {"status": "error", "message": "一時的にAIサーバーが混雑しています。再度実行ボタンを押してください。"}
+    JOBS[job_id] = {"status": "error", "message": "混雑のため解析を再試行しています。再度「実行」を押してください。"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
