@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-Provider AI Fallback Engine", version="36.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="37.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v36.0",
+        "engine": "Multi-Provider AI Fallback System v37.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -63,23 +63,24 @@ async def authenticate(
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
     prompt = f"""
-あなたは最高峰の高級ブランド鑑定士および中古市場プロ査定士です。
-提供された画像（最大4枚）を解析し、正確なJSON形式のみで出力してください。
+あなたは業界最高峰の高級ブランド鑑定士および中古流通市場のプロ査定士です。
+提供された画像（最大4枚）と手入力情報を精密分析し、正確なJSON形式のみで出力してください。
 
 対象ブランド: {brand}
 カテゴリ: {category}
 手入力補足: {model_number or 'なし'}
 
-【解析命令】
-1. 画像（文字盤、ダイヤ、ブレス、刻印、フレーム形状等）から最も正確な型番・モデル名（例: 16233G デイトジャスト 10Pダイヤ, Z2434U, M61864 等）を自動識別してください。
-2. 真贋一致率スコア（0.0〜100.0）を算出してください。
-3. 判定ランク（「基準内」「判定保留（目視確認推奨）」「基準外（偽造品の懸念あり）」）を決定してください。
-4. 推定「買取店相場」「フリマ相場」「オークション相場」の金額（円）を算出してください。
+【重要解析ルール】
+1. detected_model には、必ず「日本語の正式モデル・ライン名 ＋ 公式型番（モデル番号） ＋ シリアル/製造番号」を正確に含めてください。
+   （例: 「ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグ (型番: M44861 / シリアル: BA2260)」や「ロレックス デイトジャスト 36 (型番: 126234)」のように具体的かつ正確に出力）
+2. 真贋一致率スコア（0.0〜100.0）を細部（刻印、ステッチ、金具形状、文字配置等）から厳しく算出してください。
+3. 判定ランク（「基準内」「判定保留（目視推奨）」「基準外（偽造懸念）」）を決定してください。
+4. 推定「買取店相場」「フリマ相場」「オークション相場」のリアルな金額範囲（円）を算出してください。
 
 【出力JSON形式（JSON以外の文字は一切禁止）】
 {{
-  "detected_model": "特定された型番・品名",
-  "overall_score": 88.5,
+  "detected_model": "日本語正式ライン・品名 (型番: Mxxxx / 製造番号: xxxx)",
+  "overall_score": 92.5,
   "judgment": "基準内",
   "status_code": "PASS",
   "message": "鑑定コメント詳細",
@@ -100,7 +101,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: Gemini API (メイン) ---
+    # --- 1フェーズ: Gemini API ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -113,7 +114,7 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: OpenRouter API (無料枠ビジョンモデル自動フォールバック) ---
+    # --- 2フェーズ: OpenRouter API ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -150,7 +151,7 @@ async def authenticate(
                 last_err = f"OpenRouter Err: {str(e)}"
 
     fallback_response = {
-        "detected_model": model_number or "自動特定失敗",
+        "detected_model": model_number or "解析一時保留（型番自動特定中）",
         "overall_score": 75.0,
         "judgment": "判定保留（一時混雑）",
         "status_code": "REVIEW",
