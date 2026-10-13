@@ -11,9 +11,8 @@ from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="107.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="108.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +31,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v107.0",
+        "engine": "Multi-AI Fallback Engine v108.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -53,39 +52,32 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
                 res_body = response.read().decode('utf-8')
                 return json.loads(res_body)
     except Exception as e:
-        print(f"HTTP Request Error ({url}): {e}")
+        print(f"HTTP Post Error ({url}): {e}")
     return None
 
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
-    # --- 第1フェーズ: Gemini API (最新推奨モデル) ---
+    # --- フェーズ 1: Gemini API ---
     if GEMINI_API_KEY:
         try:
+            import google.generativeai as genai
             genai.configure(api_key=GEMINI_API_KEY)
             generation_config = {
                 "temperature": 0.2,
                 "response_mime_type": "application/json",
             }
-            # 現在利用可能な主要モデル
-            gemini_candidate_models = [
-                "gemini-2.0-flash",
-                "gemini-2.5-flash",
-                "gemini-1.5-flash-latest"
-            ]
-            for g_model in gemini_candidate_models:
+            # 安定動作するモデル順
+            for g_model in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]:
                 try:
-                    model = genai.GenerativeModel(
-                        model_name=g_model,
-                        generation_config=generation_config
-                    )
+                    model = genai.GenerativeModel(model_name=g_model, generation_config=generation_config)
                     res = model.generate_content([prompt] + pil_images)
                     if res and hasattr(res, 'text') and res.text:
                         return res.text.strip(), None
                 except Exception as g_err:
-                    print(f"Gemini Model {g_model} Error: {g_err}")
+                    print(f"Gemini ({g_model}) Fallback Skip: {g_err}")
         except Exception as e:
-            print(f"Gemini Init Error: {e}")
+            print(f"Gemini Core Error: {e}")
 
-    # --- 第2フェーズ: OpenRouter API ---
+    # --- フェーズ 2: OpenRouter API (Gemini制限時・エラー時) ---
     if OPENROUTER_API_KEY and base64_images:
         openrouter_models = [
             "google/gemini-2.0-flash-001",
@@ -114,7 +106,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
 
-    # --- 第3フェーズ: Groq API (正式ビジョンモデル) ---
+    # --- フェーズ 3: Groq API ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -136,7 +128,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
             if content and len(content.strip()) > 0:
                 return content.strip(), None
 
-    return None, "全AIエンジン（Gemini, OpenRouter, Groq）の接続試行が失敗または制限に達しました。"
+    return None, "AI連携処理でエラーが発生しました。"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list, base64_images: list, pil_images: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
@@ -220,45 +212,3 @@ async def authenticate(
     background_tasks: BackgroundTasks,
     brand: str = Form(...),
     category: str = Form(...),
-    model_number: Optional[str] = Form(""),
-    serial_number: Optional[str] = Form(""),
-    files: List[UploadFile] = File(...)
-):
-    if not files or len(files) < 1:
-        raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
-
-    raw_bytes_list = []
-    base64_images = []
-    pil_images = []
-    
-    for file in files:
-        contents = await file.read()
-        try:
-            image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((600, 600))
-            image = ImageEnhance.Sharpness(image).enhance(1.2)
-
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=75)
-            img_bytes = buffered.getvalue()
-            
-            raw_bytes_list.append(img_bytes)
-            pil_images.append(Image.open(io.BytesIO(img_bytes)))
-            base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
-
-    clean_old_jobs()
-    job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
-
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list, base64_images, pil_images)
-
-    return {"status": "accepted", "job_id": job_id}
-
-@app.get("/api/v1/result/{job_id}")
-def get_result(job_id: str):
-    clean_old_jobs()
-    if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
-    return JOBS[job_id]
