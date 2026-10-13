@@ -9,9 +9,9 @@ from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-import google.generativeai as genai
+from google import genai
 
-app = FastAPI(title="Gemini Direct Resilient AI Authenticator Engine", version="71.0")
+app = FastAPI(title="Gemini Client Resilient AI Authenticator Engine", version="72.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,16 +24,13 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
 JOBS = {}
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Direct Resilient AI Authenticator v71.0",
+        "engine": "Gemini Client Resilient AI Authenticator v72.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -105,11 +102,14 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    # --- 第1フェーズ: Google Gemini API (安定版モデル) ---
+    # --- 第1フェーズ: Google Gemini API (最高性能モデル) ---
     if GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            res = model.generate_content([prompt] + pil_images)
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            res = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[prompt] + pil_images,
+            )
             if res and res.text:
                 response_text = res.text.strip()
         except Exception:
