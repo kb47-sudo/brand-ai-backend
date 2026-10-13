@@ -12,7 +12,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="110.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="111.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +31,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v110.0",
+        "engine": "Multi-AI Fallback Engine v111.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -50,46 +50,52 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
         with urllib.request.urlopen(req, timeout=timeout) as response:
             if response.status == 200:
                 res_body = response.read().decode('utf-8')
-                return json.loads(res_body)
+                return json.loads(res_body), None
+            else:
+                return None, f"HTTP Status {response.status}"
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode('utf-8')
+            return None, f"HTTP {e.code}: {err_body[:100]}"
+        except:
+            return None, f"HTTP {e.code}"
     except Exception as e:
-        print(f"HTTP Post Error ({url}): {e}")
-    return None
+        return None, str(e)
 
 def execute_multi_ai_analysis(prompt: str, base64_images: list):
-    # --- フェーズ 1: Gemini Direct REST API ---
+    logs = []
+
+    # --- フェーズ 1: Gemini REST API ---
     if GEMINI_API_KEY and base64_images:
         gemini_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
         for g_model in gemini_models:
-            try:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={GEMINI_API_KEY}"
-                headers = {"Content-Type": "application/json"}
-                
-                parts = [{"text": prompt}]
-                for b64 in base64_images:
-                    parts.append({
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": b64
-                        }
-                    })
-                
-                payload = {
-                    "contents": [{"parts": parts}],
-                    "generationConfig": {
-                        "temperature": 0.2,
-                        "response_mime_type": "application/json"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={GEMINI_API_KEY}"
+            headers = {"Content-Type": "application/json"}
+            
+            parts = [{"text": prompt}]
+            for b64 in base64_images:
+                parts.append({
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": b64
                     }
+                })
+            
+            payload = {
+                "contents": [{"parts": parts}],
+                "generationConfig": {
+                    "temperature": 0.2
                 }
-                
-                res_json = http_post_json(url, headers, payload, timeout=15)
-                if res_json and "candidates" in res_json and len(res_json["candidates"]) > 0:
-                    cand = res_json["candidates"][0]
-                    if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
-                        text = cand["content"]["parts"][0].get("text", "")
-                        if text and len(text.strip()) > 0:
-                            return text.strip(), None
-            except Exception as e:
-                print(f"Gemini REST Error ({g_model}): {e}")
+            }
+            
+            res_json, err = http_post_json(url, headers, payload, timeout=15)
+            if res_json and "candidates" in res_json and len(res_json["candidates"]) > 0:
+                cand = res_json["candidates"][0]
+                if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
+                    text = cand["content"]["parts"][0].get("text", "")
+                    if text and len(text.strip()) > 0:
+                        return text.strip(), None
+            logs.append(f"Gemini({g_model}): {err or 'Empty response'}")
 
     # --- フェーズ 2: OpenRouter API ---
     if OPENROUTER_API_KEY and base64_images:
@@ -100,7 +106,9 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://brand-ai-backend-1.onrender.com",
+            "X-Title": "Brand AI Engine"
         }
         content_payload = [{"type": "text", "text": prompt}]
         for b64_img in base64_images:
@@ -114,11 +122,12 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=15)
+            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=15)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
+            logs.append(f"OpenRouter({or_model}): {err or 'Empty response'}")
 
     # --- フェーズ 3: Groq API ---
     if GROQ_API_KEY and base64_images:
@@ -136,45 +145,34 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
             "model": "llama-3.2-11b-vision-instruct",
             "messages": [{"role": "user", "content": content_payload}]
         }
-        res_json = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
+        res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
         if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
             content = res_json["choices"][0]["message"]["content"]
             if content and len(content.strip()) > 0:
                 return content.strip(), None
+        logs.append(f"Groq: {err or 'Empty response'}")
 
-    return None, "AI連携処理でエラーが発生しました。"
+    return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
 あなたは日本のコメ兵・大黒屋・銀座ラシン等のプロ鑑定士および買取相場アナリストです。
-送信された部位写真群（最大5枚）を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSON形式でのみ出力してください。
+送信された部位写真群を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSON形式でのみ出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
 【超重要：厳格鑑識＆画像ダイレクト識別ルール】
-1. 『detected_model』:
-   - 送信された画像（柄、形状、ロゴ刻印、シリアル印字等）を視覚的に直接読み取り、写っている実際の品名を正しい日本語（例: ルイ・ヴィトン ダミエ・エベヌ ジッピー・ウォレット 等）で特定してください。
+1. 『detected_model』: 画像（柄、形状、ロゴ刻印、シリアル印字等）を視覚的に直接読み取り、写っている実際の品名を正しい日本語（例: ルイ・ヴィトン ダミエ・エベヌ ジッピー・ウォレット 等）で特定してください。
+2. 『market_prices』: 日本国内の二次流通市場での適正相場をそれぞれ個別に試算してください。
+3. 『overall_score』 / 『judgment』: 根拠に基づいたリアルな一致率パーセンテージを出力してください。
+4. 『suspicious_points』: 気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。無ければ [] とすること。
+5. 『details』: 確認できる項目のみ "PASS" または "FAIL"。写っていない部位は "UNCHECKED" とすること。
 
-2. 『market_prices』:
-   - 特定した『detected_model』に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に試算してください。
-     - buy_store: 買取店仕入れ目安（例: "45,000円 ～ 55,000円"）
-     - fleamarket: メルカリ・ラクマ等の販売相場
-     - auction: ヤフオク等の落札相場
-
-3. 『overall_score』 / 『judgment』:
-   - 根拠に基づいたリアルな一致率パーセンテージを出力してください（固定値厳禁）。
-
-4. 『suspicious_points』:
-   - 気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。無ければ [] を返してください。
-
-5. 『details』:
-   - 画像で実際に確認できる項目のみ "PASS" または "FAIL"。写真に写っていない部位は必ず "UNCHECKED" とすること。
-
-【出力JSONフォーマット例】
+【出力JSONフォーマット】
 {{
   "detected_model": "ルイ・ヴィトン ダミエ ジッピー・ウォレット",
   "overall_score": 95.0,
@@ -234,7 +232,6 @@ async def authenticate(
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
     base64_images = []
-    
     for file in files:
         contents = await file.read()
         try:
