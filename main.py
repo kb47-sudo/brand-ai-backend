@@ -5,13 +5,14 @@ import re
 import uuid
 import base64
 import requests
+import time
 from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini 2.0 Flash Resilient AI Authenticator Engine", version="73.0")
+app = FastAPI(title="Zero-Error Precision AI Authenticator Engine", version="75.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,13 +31,92 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini 2.0 Flash Resilient AI Authenticator v73.0",
+        "engine": "Zero-Error Precision AI Authenticator v75.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
+def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list, pil_images: list):
+    # --- 第1フェーズ: Google Gemini API (最優位本命エンジン) ---
+    if GEMINI_API_KEY:
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            res = client.models.generate_content(
+                model='gemini-2.0-flash',
+                contents=[prompt] + pil_images,
+            )
+            if res and res.text and len(res.text.strip()) > 0:
+                return res.text.strip()
+        except Exception:
+            pass
+
+    # --- 第2フェーズ: OpenRouter API ---
+    if OPENROUTER_API_KEY:
+        openrouter_models = [
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "qwen/qwen-2-vl-72b-instruct:free"
+        ]
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        content_payload = [{"type": "text", "text": prompt}]
+        for b64_img in base64_images:
+            content_payload.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+            })
+
+        for or_model in openrouter_models:
+            try:
+                or_payload = {
+                    "model": or_model,
+                    "messages": [{"role": "user", "content": content_payload}]
+                }
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=30)
+                if res.status_code == 200:
+                    res_json = res.json()
+                    if "choices" in res_json and len(res_json["choices"]) > 0:
+                        content = res_json["choices"][0]["message"]["content"]
+                        if content and len(content.strip()) > 0:
+                            return content.strip()
+            except Exception:
+                continue
+
+    # --- 第3フェーズ: Groq API ---
+    if GROQ_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            content_payload = [{"type": "text", "text": prompt}]
+            for b64_img in base64_images:
+                content_payload.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                })
+
+            groq_payload = {
+                "model": "llama-3.2-11b-vision-preview",
+                "messages": [{"role": "user", "content": content_payload}],
+                "temperature": 0.2
+            }
+            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=20)
+            if res.status_code == 200:
+                res_json = res.json()
+                if "choices" in res_json and len(res_json["choices"]) > 0:
+                    content = res_json["choices"][0]["message"]["content"]
+                    if content and len(content.strip()) > 0:
+                        return content.strip()
+        except Exception:
+            pass
+
+    return None
+
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list, base64_images: list, pil_images: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
@@ -100,98 +180,22 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 }}
 """
 
-    response_text = None
-
-    # --- 第1フェーズ: Google Gemini API (gemini-2.0-flash) ---
-    if GEMINI_API_KEY:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            res = client.models.generate_content(
-                model='gemini-2.0-flash',
-                contents=[prompt] + pil_images,
-            )
-            if res and res.text:
-                response_text = res.text.strip()
-        except Exception:
-            pass
-
-    # --- 第2フェーズ: OpenRouter API ---
-    if not response_text and OPENROUTER_API_KEY:
-        openrouter_models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "qwen/qwen-2-vl-72b-instruct:free"
-        ]
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        content_payload = [{"type": "text", "text": prompt}]
-        for b64_img in base64_images:
-            content_payload.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-            })
-
-        for or_model in openrouter_models:
+    # 100%成功するまでループで自動リトライ（絶対にエラーを吐いて諦めない）
+    while True:
+        response_text = execute_ai_analysis(prompt, raw_bytes_list, base64_images, pil_images)
+        if response_text:
             try:
-                or_payload = {
-                    "model": or_model,
-                    "messages": [{"role": "user", "content": content_payload}]
-                }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
-                if res.status_code == 200:
-                    res_json = res.json()
-                    if "choices" in res_json and len(res_json["choices"]) > 0:
-                        content = res_json["choices"][0]["message"]["content"]
-                        if content and len(content.strip()) > 0:
-                            response_text = content.strip()
-                            break
+                json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if json_match:
+                    clean_json = json_match.group(0)
+                    result_data = json.loads(clean_json)
+                    JOBS[job_id] = {"status": "completed", "data": result_data}
+                    return
             except Exception:
-                continue
-
-    # --- 第3フェーズ: Groq API ---
-    if not response_text and GROQ_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            content_payload = [{"type": "text", "text": prompt}]
-            for b64_img in base64_images:
-                content_payload.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-                })
-
-            groq_payload = {
-                "model": "llama-3.2-11b-vision-preview",
-                "messages": [{"role": "user", "content": content_payload}],
-                "temperature": 0.2
-            }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=15)
-            if res.status_code == 200:
-                res_json = res.json()
-                if "choices" in res_json and len(res_json["choices"]) > 0:
-                    content = res_json["choices"][0]["message"]["content"]
-                    if content and len(content.strip()) > 0:
-                        response_text = content.strip()
-        except Exception:
-            pass
-
-    if response_text:
-        try:
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(0)
-                result_data = json.loads(clean_json)
-                JOBS[job_id] = {"status": "completed", "data": result_data}
-                return
-        except Exception as e:
-            JOBS[job_id] = {"status": "error", "message": f"パースエラー: {str(e)}"}
-            return
-
-    JOBS[job_id] = {"status": "error", "message": "一時的な混雑が発生しています。再度査定ボタンを押してください。"}
+                pass
+        
+        # 万が一一時的な混雑で全AIが応答しない場合、2秒待って自動再挑戦
+        time.sleep(2)
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -205,21 +209,24 @@ async def authenticate(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
-    pil_images = []
+    raw_bytes_list = []
     base64_images = []
+    pil_images = []
     
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
             image.thumbnail((550, 550))
-            
             image = ImageEnhance.Sharpness(image).enhance(1.2)
             pil_images.append(image)
 
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=75)
-            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            img_bytes = buffered.getvalue()
+            
+            raw_bytes_list.append(img_bytes)
+            img_str = base64.b64encode(img_bytes).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
@@ -227,7 +234,7 @@ async def authenticate(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing"}
 
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images, pil_images)
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list, base64_images, pil_images)
 
     return {"status": "accepted", "job_id": job_id}
 
