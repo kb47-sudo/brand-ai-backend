@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-Provider AI Fallback Engine", version="34.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="35.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v34.0",
+        "engine": "Multi-Provider AI Fallback System v35.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -48,12 +48,12 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 画像の高速・軽量化リサイズ処理
+    # 画像の軽量化リサイズ処理（通信速度向上）
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((600, 600))  # 転送量削減と高速化のため600pxに最適化
+            image.thumbnail((600, 600))
             pil_images.append(image)
 
             buffered = io.BytesIO()
@@ -101,7 +101,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- フェーズ1: Gemini API ---
+    # --- 1フェーズ: Gemini API (メイン) ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -114,12 +114,13 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- フェーズ2: OpenRouter API ---
+    # --- 2フェーズ: OpenRouter API (確実に現存する無料ビジョンモデル) ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
-            "google/gemini-flash-1.5-8b:free"
+            "google/gemini-2.5-flash",
+            "google/gemini-2.0-flash-001",
+            "meta-llama/llama-3.2-11b-vision-instruct",
+            "mistralai/mistral-small-24b-instruct-2501"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -141,14 +142,15 @@ async def authenticate(
                 res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
                 if res.status_code == 200:
                     res_json = res.json()
-                    if "choices" in res_json and len(res_json["choices"]) > 0:
-                        response_text = res_json["choices"][0]["message"]["content"].strip()
-                        break
-                last_err = f"OpenRouter ({res.status_code})"
+                    if "choices" in res_json and len(res_json) > 0:
+                        content = res_json["choices"][0]["message"]["content"]
+                        if content and len(content.strip()) > 0:
+                            response_text = content.strip()
+                            break
+                last_err = f"OpenRouter ({or_model}: {res.status_code})"
             except Exception as e:
                 last_err = f"OpenRouter Err: {str(e)}"
 
-    # デフォルトのフォールバック返却構造（フロント崩れ防止）
     fallback_response = {
         "detected_model": model_number or "自動特定失敗",
         "overall_score": 75.0,
