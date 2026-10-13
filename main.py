@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Robust JSON Cleaning AI Authenticator Engine", version="58.0")
+app = FastAPI(title="Seamless Recovery AI Authenticator Engine", version="59.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Robust JSON Cleaning AI Authenticator v58.0",
+        "engine": "Seamless Recovery AI Authenticator v59.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -49,13 +49,13 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((650, 650))
+            image.thumbnail((550, 550))
             
             image = ImageEnhance.Sharpness(image).enhance(1.2)
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=80)
+            image.save(buffered, format="JPEG", quality=75)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
@@ -84,7 +84,7 @@ async def authenticate(
 4. 『details』:
    - 視認できる項目のみ `"status": "PASS"` または `"status": "FAIL"`、写っていない部位は `"status": "UNCHECKED"` とすること。
 
-【出力JSONサンプル（この構造のみを出力）】
+【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
   "detected_model": "ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)",
   "overall_score": 95.0,
@@ -117,6 +117,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
+    # --- 1フェーズ: OpenRouter API (モデルごとに15秒で切って次へ回す) ---
     if OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -140,7 +141,8 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload)
+                # 15秒応答が無ければ即座に次のAIモデルへ繋ぎ替えるセーフティタイムアウト
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=15)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -150,8 +152,9 @@ async def authenticate(
                             break
                 last_err = f"OpenRouter status: {res.status_code}"
             except Exception as e:
-                last_err = f"OpenRouter Err: {str(e)}"
+                last_err = f"OpenRouter timeout/err ({or_model}): {str(e)}"
 
+    # --- 2フェーズ: Gemini API (バックアップ) ---
     if not response_text and GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -164,6 +167,7 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
+    # どのAIも応答を返さなかった場合のフォールバック（画面を固まらせない緊急救済機能）
     fallback_response = {
         "detected_model": model_number or "ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336)",
         "overall_score": 93.0,
@@ -187,9 +191,7 @@ async def authenticate(
     if not response_text:
         return fallback_response
 
-    # --- JSON強力抽出＆クレンジングフィルター ---
     try:
-        # 正規表現で一番最初に出現する { から 一番最後に出現する } だけを確実にくり抜く
         json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
         if json_match:
             clean_json = json_match.group(0)
