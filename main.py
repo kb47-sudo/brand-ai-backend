@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-Provider AI Fallback Engine", version="35.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="36.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v35.0",
+        "engine": "Multi-Provider AI Fallback System v36.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -48,7 +48,6 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 画像の軽量化リサイズ処理（通信速度向上）
     for file in files:
         contents = await file.read()
         try:
@@ -114,13 +113,12 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: OpenRouter API (確実に現存する無料ビジョンモデル) ---
+    # --- 2フェーズ: OpenRouter API (無料枠ビジョンモデル自動フォールバック) ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
-            "google/gemini-2.5-flash",
-            "google/gemini-2.0-flash-001",
-            "meta-llama/llama-3.2-11b-vision-instruct",
-            "mistralai/mistral-small-24b-instruct-2501"
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "openrouter/free"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -139,10 +137,10 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
                 if res.status_code == 200:
                     res_json = res.json()
-                    if "choices" in res_json and len(res_json) > 0:
+                    if "choices" in res_json and len(res_json["choices"]) > 0:
                         content = res_json["choices"][0]["message"]["content"]
                         if content and len(content.strip()) > 0:
                             response_text = content.strip()
