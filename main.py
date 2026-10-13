@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini Stable Authenticator Engine", version="101.0")
+app = FastAPI(title="Gemini Stable Authenticator Engine", version="102.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Stable Authenticator v101.0",
+        "engine": "Gemini Stable Authenticator v102.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -96,9 +96,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             "response_mime_type": "application/json",
         }
 
-        # 最新の安定ビジョンモデル
+        # 安定動作する最も確実な公式モデル
         model = genai.GenerativeModel(
-            model_name="gemini-2.0-flash",
+            model_name="gemini-1.5-pro",
             generation_config=generation_config
         )
 
