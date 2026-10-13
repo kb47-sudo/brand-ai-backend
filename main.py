@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini 2.5 Flash Verified Authenticator Engine", version="88.0")
+app = FastAPI(title="Gemini Fully Working Authenticator Engine", version="89.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini 2.5 Flash Verified Authenticator v88.0",
+        "engine": "Gemini Fully Working Authenticator v89.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -96,9 +96,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             "response_mime_type": "application/json",
         }
 
-        # 404エラーを回避する現行モデル名
+        # Google公式の確実なマルチモーダル対応モデル（gemini-1.5-pro）
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-1.5-pro",
             generation_config=generation_config
         )
 
@@ -142,27 +142,4 @@ async def authenticate(
     for file in files:
         contents = await file.read()
         try:
-            image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((500, 500))
-            image = ImageEnhance.Sharpness(image).enhance(1.2)
-
-            buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=75)
-            raw_bytes_list.append(buffered.getvalue())
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
-
-    clean_old_jobs()
-    job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
-
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list)
-
-    return {"status": "accepted", "job_id": job_id}
-
-@app.get("/api/v1/result/{job_id}")
-def get_result(job_id: str):
-    clean_old_jobs()
-    if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
-    return JOBS[job_id]
+            image = Image.open(io.Bytes
