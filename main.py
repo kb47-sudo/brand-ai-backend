@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Dynamic Market Valuation AI Authenticator Engine", version="69.0")
+app = FastAPI(title="Seamless Resilient AI Authenticator Engine", version="70.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +30,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Dynamic Market Valuation AI Authenticator v69.0",
+        "engine": "Seamless Resilient AI Authenticator v70.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -53,7 +53,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
 2. 『market_prices』 (最重要・動的算出):
    - 特定した『detected_model』（品名・型番）に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に算出して具体的に出力してください。
-   - テンプレや他商品の数値を使い回すことは【絶対に禁止】です。必ず画像から特定された商品（例: 時計ならRef番号、バッグならラインや型番）に応じた実勢価格を試算してください。
+   - テンプレや他商品の数値を使い回すことは【絶対に禁止】です。必ず画像から特定された商品に応じた実勢価格を試算してください。
      - buy_store: 買取店仕入れ目安（例: "◯◯◯,◯◯◯円 ～ ◯◯◯,◯◯◯円"）
      - fleamarket: メルカリ・ラクマ等の販売相場
      - auction: ヤフオク等の落札相場
@@ -102,12 +102,12 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    # --- 第1フェーズ: Google Gemini API (本命モデル) ---
+    # --- 第1フェーズ: Google Gemini API ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             res = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-2.0-flash',
                 contents=[prompt] + pil_images,
             )
             if res and res.text:
@@ -191,7 +191,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             JOBS[job_id] = {"status": "error", "message": f"パースエラー: {str(e)}"}
             return
 
-    JOBS[job_id] = {"status": "error", "message": "API制限および全モデル混雑のため解析を完了できませんでした。少し時間を置いてお試しください。"}
+    JOBS[job_id] = {"status": "error", "message": "一時的にAIサーバーが混雑しています。再度実行ボタンを押してください。"}
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
