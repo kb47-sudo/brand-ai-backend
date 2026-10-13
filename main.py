@@ -11,8 +11,9 @@ from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="111.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="112.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v111.0",
+        "engine": "Multi-AI Fallback Engine v112.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -62,53 +63,40 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
     except Exception as e:
         return None, str(e)
 
-def execute_multi_ai_analysis(prompt: str, base64_images: list):
+def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- フェーズ 1: Gemini REST API ---
-    if GEMINI_API_KEY and base64_images:
-        gemini_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
-        for g_model in gemini_models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={GEMINI_API_KEY}"
-            headers = {"Content-Type": "application/json"}
-            
-            parts = [{"text": prompt}]
-            for b64 in base64_images:
-                parts.append({
-                    "inline_data": {
-                        "mime_type": "image/jpeg",
-                        "data": b64
-                    }
-                })
-            
-            payload = {
-                "contents": [{"parts": parts}],
-                "generationConfig": {
-                    "temperature": 0.2
-                }
+    # --- フェーズ 1: Gemini SDK ---
+    if GEMINI_API_KEY:
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            generation_config = {
+                "temperature": 0.2,
+                "response_mime_type": "application/json"
             }
-            
-            res_json, err = http_post_json(url, headers, payload, timeout=15)
-            if res_json and "candidates" in res_json and len(res_json["candidates"]) > 0:
-                cand = res_json["candidates"][0]
-                if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
-                    text = cand["content"]["parts"][0].get("text", "")
-                    if text and len(text.strip()) > 0:
-                        return text.strip(), None
-            logs.append(f"Gemini({g_model}): {err or 'Empty response'}")
+            # 公式SDK経由の標準モデル指定
+            for g_model in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]:
+                try:
+                    model = genai.GenerativeModel(model_name=g_model, generation_config=generation_config)
+                    res = model.generate_content([prompt] + pil_images)
+                    if res and hasattr(res, 'text') and res.text:
+                        return res.text.strip(), None
+                except Exception as g_err:
+                    logs.append(f"Gemini({g_model}): {str(g_err)[:80]}")
+        except Exception as e:
+            logs.append(f"GeminiInit: {str(e)[:80]}")
 
-    # --- フェーズ 2: OpenRouter API ---
+    # --- フェーズ 2: OpenRouter API (完全無料モデル限定) ---
     if OPENROUTER_API_KEY and base64_images:
         openrouter_models = [
-            "google/gemini-2.0-flash-001",
-            "meta-llama/llama-3.2-11b-vision-instruct",
-            "qwen/qwen-2-vl-72b-instruct"
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "qwen/qwen-2-vl-72b-instruct:free"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://brand-ai-backend-1.onrender.com",
-            "X-Title": "Brand AI Engine"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
         content_payload = [{"type": "text", "text": prompt}]
         for b64_img in base64_images:
@@ -127,13 +115,14 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
-            logs.append(f"OpenRouter({or_model}): {err or 'Empty response'}")
+            logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- フェーズ 3: Groq API ---
+    # --- フェーズ 3: Groq API (UA追加で403回避) ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         }
         content_payload = [{"type": "text", "text": prompt}]
         for b64_img in base64_images:
@@ -142,7 +131,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
         groq_payload = {
-            "model": "llama-3.2-11b-vision-instruct",
+            "model": "llama-3.2-11b-vision-preview",
             "messages": [{"role": "user", "content": content_payload}]
         }
         res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
@@ -150,11 +139,11 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
             content = res_json["choices"][0]["message"]["content"]
             if content and len(content.strip()) > 0:
                 return content.strip(), None
-        logs.append(f"Groq: {err or 'Empty response'}")
+        logs.append(f"Groq: {err or 'Empty'}")
 
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list):
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
@@ -191,7 +180,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 }}
 """
 
-    response_text, err_msg = execute_multi_ai_analysis(prompt, base64_images)
+    response_text, err_msg = execute_multi_ai_analysis(prompt, pil_images, base64_images)
 
     if response_text:
         try:
@@ -232,6 +221,7 @@ async def authenticate(
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
     base64_images = []
+    pil_images = []
     for file in files:
         contents = await file.read()
         try:
@@ -243,6 +233,7 @@ async def authenticate(
             image.save(buffered, format="JPEG", quality=75)
             img_bytes = buffered.getvalue()
             
+            pil_images.append(Image.open(io.BytesIO(img_bytes)))
             base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
@@ -251,7 +242,7 @@ async def authenticate(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images)
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images, pil_images)
 
     return {"status": "accepted", "job_id": job_id}
 
