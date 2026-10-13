@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini & Groq Multi-AI Authenticator Engine", version="31.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="32.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,14 +21,16 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v31.0",
+        "engine": "Multi-Provider AI Fallback System v32.0",
         "gemini_active": bool(GEMINI_API_KEY),
+        "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
@@ -97,7 +99,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: Gemini API (メイン) ---
+    # --- フェーズ1: Gemini API (メイン) ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -110,55 +112,65 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: Groq Vision API (利用可能モデルの動的フォールバック) ---
-    if not response_text and GROQ_API_KEY:
-        groq_models = [
-            "llama-3.2-11b-vision-preview",
-            "llama-3.2-90b-vision-preview",
-            "llama-3.2-11b-instruct",
-            "llama-3.2-90b-instruct",
-            "llava-v1.5-7b-groq"
+    # --- フェーズ2: OpenRouter API (無料枠ビジョンモデル群) ---
+    if not response_text and OPENROUTER_API_KEY:
+        openrouter_models = [
+            "google/gemini-2.5-flash:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "qwen/qwen-2-vl-72b-instruct:free"
         ]
-        
-        # Groqの現行アクティブモデル一覧を動的に取得する（失敗時はリスト順試行）
-        try:
-            m_res = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, timeout=5)
-            if m_res.status_code == 200:
-                available_ids = [m["id"] for m in m_res.json().get("data", [])]
-                vision_active = [m for m in available_ids if "vision" in m or "llava" in m]
-                if vision_active:
-                    groq_models = vision_active + groq_models
-        except Exception:
-            pass
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        content_payload = [{"type": "text", "text": prompt}]
+        for b64_img in base64_images:
+            content_payload.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+            })
 
-        for g_model in groq_models:
+        for or_model in openrouter_models:
             try:
-                headers = {
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json"
+                or_payload = {
+                    "model": or_model,
+                    "messages": [{"role": "user", "content": content_payload}]
                 }
-                content_payload = [{"type": "text", "text": prompt}]
-                for b64_img in base64_images:
-                    content_payload.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-                    })
-
-                groq_payload = {
-                    "model": g_model,
-                    "messages": [{"role": "user", "content": content_payload}],
-                    "temperature": 0.2
-                }
-                
-                g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
-                if g_res.status_code == 200:
-                    g_json = g_res.json()
-                    response_text = g_json["choices"][0]["message"]["content"].strip()
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
+                if res.status_code == 200:
+                    response_text = res.json()["choices"][0]["message"]["content"].strip()
                     break
                 else:
-                    last_err = f"Groq {g_model} ({g_res.status_code}): {g_res.text}"
+                    last_err = f"OpenRouter {or_model} ({res.status_code}): {res.text}"
             except Exception as e:
-                last_err = f"Groq Err: {str(e)}"
+                last_err = f"OpenRouter Err: {str(e)}"
+
+    # --- フェーズ3: Groq API (予備) ---
+    if not response_text and GROQ_API_KEY:
+        try:
+            headers = {
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            content_payload = [{"type": "text", "text": prompt}]
+            for b64_img in base64_images:
+                content_payload.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
+                })
+
+            groq_payload = {
+                "model": "llama-3.2-11b-vision-instruct",
+                "messages": [{"role": "user", "content": content_payload}],
+                "temperature": 0.2
+            }
+            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
+            if g_res.status_code == 200:
+                response_text = g_res.json()["choices"][0]["message"]["content"].strip()
+            else:
+                last_err = f"Groq ({g_res.status_code}): {g_res.text}"
+        except Exception as e:
+            last_err = f"Groq Err: {str(e)}"
 
     if not response_text:
         return {
@@ -166,7 +178,7 @@ async def authenticate(
             "judgment": "判定保留（無料AI上限到達）",
             "status_code": "REVIEW",
             "detected_model": model_number or "解析一時保留",
-            "message": f"すべての無料AIの制限に達しました。時間をおいてお試しください: {str(last_err)}",
+            "message": f"すべての無料AI制限に達しました: {str(last_err)}",
             "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
             "details": [{"name": "AI解析レスポンス", "pass": False}]
         }
