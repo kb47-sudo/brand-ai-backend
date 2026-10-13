@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-Provider AI Fallback Engine", version="32.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="33.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,16 +22,14 @@ app.add_middleware(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-Provider AI Fallback System v32.0",
+        "engine": "Multi-Provider AI Fallback System v33.0",
         "gemini_active": bool(GEMINI_API_KEY),
-        "openrouter_active": bool(OPENROUTER_API_KEY),
-        "groq_active": bool(GROQ_API_KEY)
+        "openrouter_active": bool(OPENROUTER_API_KEY)
     }
 
 @app.post("/api/v1/authenticate")
@@ -99,24 +97,26 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- フェーズ1: Gemini API (メイン) ---
+    # --- 1. Gemini ローテーション (2.5 -> 3.8) ---
     if GEMINI_API_KEY:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            res = client.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=[prompt] + pil_images,
-            )
-            if res and res.text:
-                response_text = res.text.strip()
-        except Exception as e:
-            last_err = f"Gemini Limit: {str(e)}"
+        gemini_models = ['gemini-2.5-flash', 'gemini-3.8-flash']
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        for g_mod in gemini_models:
+            try:
+                res = client.models.generate_content(
+                    model=g_mod,
+                    contents=[prompt] + pil_images,
+                )
+                if res and res.text:
+                    response_text = res.text.strip()
+                    break
+            except Exception as e:
+                last_err = f"Gemini {g_mod}: {str(e)}"
 
-    # --- フェーズ2: OpenRouter API (無料枠ビジョンモデル群) ---
+    # --- 2. OpenRouter (キーが存在する場合のみ起動) ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.5-flash:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free",
             "qwen/qwen-2-vl-72b-instruct:free"
         ]
         headers = {
@@ -144,33 +144,6 @@ async def authenticate(
                     last_err = f"OpenRouter {or_model} ({res.status_code}): {res.text}"
             except Exception as e:
                 last_err = f"OpenRouter Err: {str(e)}"
-
-    # --- フェーズ3: Groq API (予備) ---
-    if not response_text and GROQ_API_KEY:
-        try:
-            headers = {
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            content_payload = [{"type": "text", "text": prompt}]
-            for b64_img in base64_images:
-                content_payload.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-                })
-
-            groq_payload = {
-                "model": "llama-3.2-11b-vision-instruct",
-                "messages": [{"role": "user", "content": content_payload}],
-                "temperature": 0.2
-            }
-            g_res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=groq_payload, timeout=25)
-            if g_res.status_code == 200:
-                response_text = g_res.json()["choices"][0]["message"]["content"].strip()
-            else:
-                last_err = f"Groq ({g_res.status_code}): {g_res.text}"
-        except Exception as e:
-            last_err = f"Groq Err: {str(e)}"
 
     if not response_text:
         return {
