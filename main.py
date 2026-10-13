@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Gemini Ultra Stable Authenticator Engine", version="87.0")
+app = FastAPI(title="Gemini 2.5 Flash Verified Authenticator Engine", version="88.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini Ultra Stable Authenticator v87.0",
+        "engine": "Gemini 2.5 Flash Verified Authenticator v88.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -87,7 +87,6 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         
-        # 安定版 SDK による画像オブジェクトの構築
         pil_images = []
         for img_bytes in raw_bytes_list:
             pil_images.append(Image.open(io.BytesIO(img_bytes)).convert('RGB'))
@@ -97,9 +96,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             "response_mime_type": "application/json",
         }
 
-        # 確実に起動する公式ビジョンモデル
+        # 404エラーを回避する現行モデル名
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             generation_config=generation_config
         )
 
