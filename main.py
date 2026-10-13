@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Zero-Error Precision AI Authenticator Engine", version="75.0")
+app = FastAPI(title="Fully Sanitized AI Authenticator Engine", version="76.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,28 +31,43 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Zero-Error Precision AI Authenticator v75.0",
+        "engine": "Fully Sanitized AI Authenticator v76.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
     }
 
-def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list, pil_images: list):
-    # --- 第1フェーズ: Google Gemini API (最優位本命エンジン) ---
-    if GEMINI_API_KEY:
+def clean_old_jobs():
+    """メモリリーク防止：10分以上経過した古いジョブを削除"""
+    now = time.time()
+    expired_keys = [k for k, v in JOBS.items() if now - v.get("created_at", now) > 600]
+    for k in expired_keys:
+        del JOBS[k]
+
+def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list):
+    # タスク内で画像オブジェクトを安全に復元（スレッド破棄エラー対策）
+    pil_images = []
+    for b in raw_bytes_list:
+        try:
+            pil_images.append(Image.open(io.BytesIO(b)).convert('RGB'))
+        except Exception:
+            pass
+
+    # --- 第1フェーズ: Google Gemini API ---
+    if GEMINI_API_KEY and pil_images:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
             res = client.models.generate_content(
                 model='gemini-2.0-flash',
                 contents=[prompt] + pil_images,
             )
-            if res and res.text and len(res.text.strip()) > 0:
+            if res and hasattr(res, 'text') and res.text and len(res.text.strip()) > 0:
                 return res.text.strip()
         except Exception:
             pass
 
     # --- 第2フェーズ: OpenRouter API ---
-    if OPENROUTER_API_KEY:
+    if OPENROUTER_API_KEY and base64_images:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
             "meta-llama/llama-3.2-11b-vision-instruct:free",
@@ -75,7 +90,7 @@ def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list, 
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=30)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -86,7 +101,7 @@ def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list, 
                 continue
 
     # --- 第3フェーズ: Groq API ---
-    if GROQ_API_KEY:
+    if GROQ_API_KEY and base64_images:
         try:
             headers = {
                 "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -116,7 +131,7 @@ def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list, 
 
     return None
 
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list, base64_images: list, pil_images: list):
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list, base64_images: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
@@ -180,21 +195,20 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 }}
 """
 
-    # 100%成功するまでループで自動リトライ（絶対にエラーを吐いて諦めない）
     while True:
-        response_text = execute_ai_analysis(prompt, raw_bytes_list, base64_images, pil_images)
+        clean_old_jobs()
+        response_text = execute_ai_analysis(prompt, raw_bytes_list, base64_images)
         if response_text:
             try:
                 json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
                 if json_match:
                     clean_json = json_match.group(0)
                     result_data = json.loads(clean_json)
-                    JOBS[job_id] = {"status": "completed", "data": result_data}
+                    JOBS[job_id] = {"status": "completed", "data": result_data, "created_at": time.time()}
                     return
             except Exception:
                 pass
         
-        # 万が一一時的な混雑で全AIが応答しない場合、2秒待って自動再挑戦
         time.sleep(2)
 
 @app.post("/api/v1/authenticate")
@@ -211,7 +225,6 @@ async def authenticate(
 
     raw_bytes_list = []
     base64_images = []
-    pil_images = []
     
     for file in files:
         contents = await file.read()
@@ -219,7 +232,6 @@ async def authenticate(
             image = Image.open(io.BytesIO(contents)).convert('RGB')
             image.thumbnail((550, 550))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
-            pil_images.append(image)
 
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=75)
@@ -231,15 +243,17 @@ async def authenticate(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
+    clean_old_jobs()
     job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"status": "processing"}
+    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list, base64_images, pil_images)
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list, base64_images)
 
     return {"status": "accepted", "job_id": job_id}
 
 @app.get("/api/v1/result/{job_id}")
 def get_result(job_id: str):
+    clean_old_jobs()
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
     return JOBS[job_id]
