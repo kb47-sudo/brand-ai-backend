@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Strict Pinpoint AI Authenticator Engine", version="42.0")
+app = FastAPI(title="5-Slot Multi-Vision AI Authenticator Engine", version="43.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Strict Pinpoint AI Authenticator Engine v42.0",
+        "engine": "5-Slot Multi-Vision AI Authenticator Engine v43.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -47,51 +47,49 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # 判別精度と転送速度のバランス最適化 (700px, JPEG品質80)
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((700, 700))
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=80)
+            image.save(buffered, format="JPEG", quality=75)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    user_hint = f"ユーザー指定型番: {model_number}" if model_number else "ユーザー指定型番: なし（画像から型番を完全特定すること）"
+    user_hint = f"ユーザー指定補足型番: {model_number}" if model_number else "ユーザー指定補足型番: なし（画像解析により完全自動特定）"
 
     prompt = f"""
-あなたはコメ兵・大黒屋等のプロ査定士です。
-画像を分析し、正確な製品名・公式型番・製造番号（シリアル）・市場相場を特定してJSON形式のみで出力してください。
+あなたは日本のコメ兵・大黒屋等のプロ鑑定士です。
+送信された画像群（最大5枚：表面、裏面、刻印、シリアル、金具）を多角的に照合し、正確な製品名・公式型番・製造番号（シリアル）・市場相場を特定してJSON形式でのみ出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【絶対ルール】
+【絶対査定ルール】
 1. 『detected_model』:
-   - 「N/A」や「不明」などの曖昧な表記は厳禁です。
-   - ユーザー指定型番がある場合はそれを採用し、ない場合は画像（柄・形状・構造）から該当する公式型番を特定してください。
-   - 例: ダミエ・エベヌで縦レザーバンド付きセカンドバッグは「ルイ・ヴィトン ダミエ・エベヌ サンルイ (型番: N51993 / シリアル: SN4120等)」と正確に出力。
+   - 表面デザインだけでなく、**裏面（背面ポケット、ベルトストラップ形状、マチ構造）**の画像を精査し、類似モデルと誤認せずに正確な商品名と型番を決定してください。
+   - ユーザー指定型番がある場合はそれを最優先し、正確な日本語ライン名と統合してください。
+   - 例: 「ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)」
 
 2. 『market_prices』:
-   - 特定した製品（例: サンルイ N51993）の中古市場実勢相場を算出。
-   - サンルイ N51993 の場合の目安相場: 買取店 25,000円～40,000円 / フリマ 45,000円～65,000円 / オークション 35,000円～55,000円。
+   - 特定された製品の日本国内中古市場（美品〜並品）におけるリアルな実勢取引価格を算出して出力。
+   - 買取店相場（仕入れ）、フリマ相場（メルカリ等）、オークション相場（ヤフオク等）をそれぞれ提示。
 
 3. 『overall_score』 / 『judgment』 / 『message』:
-   - 刻印・シリアルフォーマット・生地・金具を多角検証しスコアと解説を作成。
+   - ロゴ刻印（文字間隔・Rマーク）、シリアルコードの整合性、裏面構造、金具仕上げから総合判定（0.0〜100.0）とプロ目線の解説を作成。
 
-【出力JSONフォーマット（JSONのみ出力）】
+【出力JSONフォーマット（JSONコードブロックのみ）】
 {{
   "detected_model": "ブランド名 ライン・製品名 (型番: XXXX / シリアル: XXXX)",
-  "overall_score": 93.0,
+  "overall_score": 95.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "鑑定コメント詳細",
+  "message": "表面・裏面構造、刻印、シリアルフォーマットに基づく詳細鑑定解説",
   "market_prices": {{
     "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
     "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
@@ -179,14 +177,6 @@ async def authenticate(
     try:
         clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
         result_data = json.loads(clean_json)
-        
-        # N/A補正：N/Aが出たら、ユーザー手入力型番か「サンルイ (N51993相当)」へ安全補正
-        if "detected_model" in result_data and ("N/A" in result_data["detected_model"] or "不明" in result_data["detected_model"]):
-            if model_number:
-                result_data["detected_model"] = result_data["detected_model"].replace("N/A", model_number).replace("不明", model_number)
-            elif "サンルイ" in result_data["detected_model"] or "ダミエ" in result_data["detected_model"]:
-                result_data["detected_model"] = result_data["detected_model"].replace("N/A", "N51993").replace("不明", "N51993")
-
         return result_data
     except Exception:
         return fallback_response
