@@ -4,7 +4,6 @@ import json
 import re
 import uuid
 import base64
-import requests
 import time
 from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
@@ -13,7 +12,7 @@ from typing import List, Optional
 from google import genai
 from google.genai import types
 
-app = FastAPI(title="Gemini 1.5 Flash Stable Authenticator Engine", version="82.0")
+app = FastAPI(title="Structured JSON Authenticator Engine", version="83.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -23,19 +22,14 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 JOBS = {}
 
 @app.get("/")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini 1.5 Flash Stable Authenticator v82.0",
-        "gemini_active": bool(GEMINI_API_KEY),
-        "openrouter_active": bool(OPENROUTER_API_KEY),
-        "groq_active": bool(GROQ_API_KEY)
+        "engine": "Structured JSON Authenticator v83.0",
+        "gemini_active": bool(GEMINI_API_KEY)
     }
 
 def clean_old_jobs():
@@ -44,66 +38,12 @@ def clean_old_jobs():
     for k in expired_keys:
         del JOBS[k]
 
-def execute_ai_analysis(prompt: str, raw_bytes_list: list, base64_images: list):
-    last_error = ""
-    # --- 第1フェーズ: Google Gemini API (gemini-1.5-flash で制限回避) ---
-    if GEMINI_API_KEY and raw_bytes_list:
-        try:
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            gemini_contents = [prompt]
-            for img_bytes in raw_bytes_list:
-                gemini_contents.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
-
-            res = client.models.generate_content(
-                model='gemini-1.5-flash',
-                contents=gemini_contents,
-            )
-            if res and hasattr(res, 'text') and res.text and len(res.text.strip()) > 0:
-                return res.text.strip(), None
-        except Exception as e:
-            last_error = f"Gemini Error: {str(e)}"
-
-    # --- 第2フェーズ: OpenRouter API ---
-    if OPENROUTER_API_KEY and base64_images:
-        openrouter_models = [
-            "google/gemini-2.0-flash-exp:free",
-            "meta-llama/llama-3.2-11b-vision-instruct:free"
-        ]
-        headers = {
-            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        content_payload = [{"type": "text", "text": prompt}]
-        for b64_img in base64_images:
-            content_payload.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-            })
-
-        for or_model in openrouter_models:
-            try:
-                or_payload = {
-                    "model": or_model,
-                    "messages": [{"role": "user", "content": content_payload}]
-                }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=8)
-                if res.status_code == 200:
-                    res_json = res.json()
-                    if "choices" in res_json and len(res_json["choices"]) > 0:
-                        content = res_json["choices"][0]["message"]["content"]
-                        if content and len(content.strip()) > 0:
-                            return content.strip(), None
-            except Exception as e:
-                last_error += f" | OpenRouter Error: {str(e)}"
-
-    return None, last_error or "全AIモデルからの応答がありませんでした。"
-
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list, base64_images: list):
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, raw_bytes_list: list):
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
 あなたは日本のコメ兵・大黒屋・銀座ラシン等のプロ鑑定士および買取相場アナリストです。
-送信された部位写真群（最大5枚）を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSON形式でのみ出力してください。
+送信された部位写真群（最大5枚）を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSONで出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
@@ -113,80 +53,77 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 1. 『detected_model』:
    - 送信された画像（柄、形状、ロゴ刻印、シリアル印字等）を視覚的に直接読み取り、写っている実際の品名を正しい日本語（例: ルイ・ヴィトン ダミエ・エベヌ ジッピー・ウォレット 等）で特定してください。
 
-2. 『market_prices』 (画像特定モデルに応じた動的算出):
-   - 特定した『detected_model』に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に試算して出力してください。
+2. 『market_prices』:
+   - 特定した『detected_model』に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に試算してください。
+     - buy_store: 買取店仕入れ目安（例: "45,000円 ～ 55,000円"）
+     - fleamarket: メルカリ・ラクマ等の販売相場
+     - auction: ヤフオク等の落札相場
 
 3. 『overall_score』 / 『judgment』:
-   - 根拠に基づいたリアルな一致率パーセンテージを出力してください。
+   - 根拠に基づいたリアルな一致率パーセンテージを出力してください（固定値厳禁）。
 
 4. 『suspicious_points』:
-   - 気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。無ければ `[]` を返してください。
+   - 気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。無ければ [] を返してください。
 
 5. 『details』:
-   - 画像で実際に確認できる項目のみ `"status": "PASS"` または `"status": "FAIL"`。写真に写っていない部位は必ず `"status": "UNCHECKED"` とすること。
-
-【出力JSONフォーマット（JSONコードブロックのみ）】
-{{
-  "detected_model": "画像から直接特定した正確な日本語ブランド・ライン・品名・型番",
-  "overall_score": 96.5,
-  "judgment": "基準内",
-  "status_code": "PASS",
-  "message": "・刻印精度: 画像から確認できた刻印の精密解説\\n・シリアル適合度: シリアルの解読結果および適合性\\n・金具仕上げ: 金具の仕上げ状態",
-  "suspicious_points": [],
-  "market_prices": {{
-    "buy_store": "特定モデルに応じたリアル買取相場",
-    "fleamarket": "特定モデルに応じたリアルフリマ相場",
-    "auction": "特定モデルに応じたリアルオークション相場"
-  }},
-  "details": [
-    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
-    {{"name": "2. ®マーク・製造国刻印の凹み形状と底面平坦度", "status": "PASS"}},
-    {{"name": "3. シリアル/製造番号の打刻書体・年週法則適合性", "status": "PASS"}},
-    {{"name": "4. 金属パーツのエッジ面取り・メッキ層の均一性", "status": "PASS"}},
-    {{"name": "5. ビス・ねじ頭のすり割り形状・溝の仕上げ状態", "status": "UNCHECKED"}},
-    {{"name": "6. ジッパー・スナップ金具の刻印・噛み合わせ", "status": "PASS"}},
-    {{"name": "7. ステッチ（縫い目）の目打ち傾斜角度・ピッチ", "status": "PASS"}},
-    {{"name": "8. 素材（レザー/キャンバス）のシボ・柄アライメント", "status": "PASS"}},
-    {{"name": "9. コバ処理（バニッシュ塗料の透明度・厚み）", "status": "UNCHECKED"}},
-    {{"name": "10. 内側ライニング・裁断面・生地張り質感", "status": "PASS"}},
-    {{"name": "11. ギャランティ/シリアルシールのラメ・透かし構造", "status": "UNCHECKED"}},
-    {{"name": "12. 全体構造の歪み・自重・各パーツの取付角度", "status": "PASS"}}
-  ]
-}}
+   - 画像で実際に確認できる項目のみ "PASS" または "FAIL"。写真に写っていない部位は必ず "UNCHECKED" とすること。
 """
 
-    response_text, err_msg = execute_ai_analysis(prompt, raw_bytes_list, base64_images)
-    
-    if response_text:
-        try:
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-            if json_match:
-                clean_json = json_match.group(0)
-                result_data = json.loads(clean_json)
-                JOBS[job_id] = {"status": "completed", "data": result_data, "created_at": time.time()}
-                return
-        except Exception as parse_e:
-            err_msg = f"JSON Parse Error: {str(parse_e)}"
-
-    # エラー時は隠さず生の理由を画面に返す
-    JOBS[job_id] = {
-        "status": "completed",
-        "created_at": time.time(),
-        "data": {
-            "detected_model": f"{brand} {category} (解析エラー発生)",
-            "overall_score": 0.0,
-            "judgment": "エラー発生",
-            "status_code": "ERROR",
-            "message": f"【システムエラー詳細】:\n{err_msg}",
-            "suspicious_points": ["AI応答の取得に失敗しました"],
-            "market_prices": {
-                "buy_store": "-- 円",
-                "fleamarket": "-- 円",
-                "auction": "-- 円"
-            },
-            "details": []
+    if not GEMINI_API_KEY:
+        JOBS[job_id] = {
+            "status": "completed",
+            "created_at": time.time(),
+            "data": {
+                "detected_model": "GEMINI_API_KEY 未設定",
+                "overall_score": 0.0,
+                "judgment": "設定エラー",
+                "status_code": "ERROR",
+                "message": "RenderのEnvironmentに GEMINI_API_KEY を設定してください。",
+                "suspicious_points": [],
+                "market_prices": {"buy_store": "-- 円", "fleamarket": "-- 円", "auction": "-- 円"},
+                "details": []
+            }
         }
-    }
+        return
+
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        contents = [prompt]
+        for img_bytes in raw_bytes_list:
+            contents.append(types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"))
+
+        # 100% JSONフォーマット出力を保証
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            temperature=0.2
+        )
+
+        res = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=contents,
+            config=config
+        )
+
+        if res and hasattr(res, 'text') and res.text:
+            result_data = json.loads(res.text.strip())
+            JOBS[job_id] = {"status": "completed", "data": result_data, "created_at": time.time()}
+            return
+
+    except Exception as e:
+        JOBS[job_id] = {
+            "status": "completed",
+            "created_at": time.time(),
+            "data": {
+                "detected_model": f"{brand} {category} (解析エラー)",
+                "overall_score": 0.0,
+                "judgment": "エラー発生",
+                "status_code": "ERROR",
+                "message": f"【解析例外詳細】:\n{str(e)}",
+                "suspicious_points": ["AI応答処理中に例外が発生しました"],
+                "market_prices": {"buy_store": "-- 円", "fleamarket": "-- 円", "auction": "-- 円"},
+                "details": []
+            }
+        }
 
 @app.post("/api/v1/authenticate")
 async def authenticate(
@@ -201,7 +138,6 @@ async def authenticate(
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
     raw_bytes_list = []
-    base64_images = []
     
     for file in files:
         contents = await file.read()
@@ -212,11 +148,7 @@ async def authenticate(
 
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=75)
-            img_bytes = buffered.getvalue()
-            
-            raw_bytes_list.append(img_bytes)
-            img_str = base64.b64encode(img_bytes).decode("utf-8")
-            base64_images.append(img_str)
+            raw_bytes_list.append(buffered.getvalue())
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
@@ -224,7 +156,7 @@ async def authenticate(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list, base64_images)
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, raw_bytes_list)
 
     return {"status": "accepted", "job_id": job_id}
 
