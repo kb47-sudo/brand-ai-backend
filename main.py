@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="33.0")
+app = FastAPI(title="Multi-Provider AI Fallback Engine", version="33.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +22,7 @@ app.add_middleware(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 @app.get("/")
 def read_root():
@@ -29,7 +30,8 @@ def read_root():
         "status": "Live",
         "engine": "Multi-Provider AI Fallback System v33.0",
         "gemini_active": bool(GEMINI_API_KEY),
-        "openrouter_active": bool(OPENROUTER_API_KEY)
+        "openrouter_active": bool(OPENROUTER_API_KEY),
+        "groq_active": bool(GROQ_API_KEY)
     }
 
 @app.post("/api/v1/authenticate")
@@ -97,27 +99,25 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1. Gemini ローテーション (2.5 -> 3.8) ---
+    # --- フェーズ1: Gemini API (メイン) ---
     if GEMINI_API_KEY:
-        gemini_models = ['gemini-2.5-flash', 'gemini-3.8-flash']
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        for g_mod in gemini_models:
-            try:
-                res = client.models.generate_content(
-                    model=g_mod,
-                    contents=[prompt] + pil_images,
-                )
-                if res and res.text:
-                    response_text = res.text.strip()
-                    break
-            except Exception as e:
-                last_err = f"Gemini {g_mod}: {str(e)}"
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            res = client.models.generate_content(
+                model='gemini-3.8-flash',
+                contents=[prompt] + pil_images,
+            )
+            if res and res.text:
+                response_text = res.text.strip()
+        except Exception as e:
+            last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2. OpenRouter (キーが存在する場合のみ起動) ---
+    # --- フェーズ2: OpenRouter API (厳選・無料ビジョンモデル) ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
-            "google/gemini-2.5-flash:free",
-            "qwen/qwen-2-vl-72b-instruct:free"
+            "google/gemini-2.0-flash-exp:free",
+            "meta-llama/llama-3.2-11b-vision-instruct:free",
+            "google/gemini-flash-1.5-8b:free"
         ]
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -125,48 +125,4 @@ async def authenticate(
         }
         content_payload = [{"type": "text", "text": prompt}]
         for b64_img in base64_images:
-            content_payload.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-            })
-
-        for or_model in openrouter_models:
-            try:
-                or_payload = {
-                    "model": or_model,
-                    "messages": [{"role": "user", "content": content_payload}]
-                }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
-                if res.status_code == 200:
-                    response_text = res.json()["choices"][0]["message"]["content"].strip()
-                    break
-                else:
-                    last_err = f"OpenRouter {or_model} ({res.status_code}): {res.text}"
-            except Exception as e:
-                last_err = f"OpenRouter Err: {str(e)}"
-
-    if not response_text:
-        return {
-            "overall_score": 75.0,
-            "judgment": "判定保留（無料AI上限到達）",
-            "status_code": "REVIEW",
-            "detected_model": model_number or "解析一時保留",
-            "message": f"すべての無料AI制限に達しました: {str(last_err)}",
-            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
-            "details": [{"name": "AI解析レスポンス", "pass": False}]
-        }
-
-    try:
-        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
-        result_data = json.loads(clean_json)
-        return result_data
-    except Exception as e:
-        return {
-            "overall_score": 70.0,
-            "judgment": "判定保留（データ変換エラー）",
-            "status_code": "REVIEW",
-            "detected_model": model_number or "解析失敗",
-            "message": f"AI応答のパースに失敗しました: {str(e)}",
-            "market_prices": {"buy_store": "算出不能", "fleamarket": "算出不能", "auction": "算出不能"},
-            "details": [{"name": "データフォーマット適合", "pass": False}]
-        }
+            content_payload.append
