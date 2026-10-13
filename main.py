@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Fixed OpenRouter API Engine", version="52.0")
+app = FastAPI(title="Unlimited Timeout Strict AI Authenticator Engine", version="54.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +26,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Fixed OpenRouter API Engine v52.0",
+        "engine": "Unlimited Timeout Strict AI Authenticator v54.0",
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "gemini_active": bool(GEMINI_API_KEY)
     }
@@ -45,7 +45,6 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
-    # AI解析用の最適軽量化処理 (600px, quality 80)
     for file in files:
         contents = await file.read()
         try:
@@ -75,7 +74,7 @@ async def authenticate(
 ・{user_hint}
 
 【厳格ルール】
-1. 『details』（チェック項目）:
+1. 『details』（12大チェック項目）:
    - 各項目について、画像で確認でき、かつ基準を満たしている場合のみ `"status": "PASS"` (基準内)。
    - 画像で確認でき、不審点・違和感がある場合は `"status": "FAIL"` (不審あり)。
    - 画像に写っていない、または判断がつかない項目は必ず `"status": "UNCHECKED"` (未確認) としてください。
@@ -119,7 +118,7 @@ async def authenticate(
     response_text = None
     last_err = None
 
-    # --- 1フェーズ: OpenRouter API (正しいエンドポイントURL) ---
+    # --- 1フェーズ: OpenRouter API (タイムアウト制限なしで最後まで粘る) ---
     if OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -143,8 +142,8 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                # 正しいAPI URL: https://openrouter.ai/api/v1/chat/completions
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=20)
+                # timeout制限を撤廃（AIが応答を返すまで何秒でも粘る）
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -189,4 +188,8 @@ async def authenticate(
         return fallback_response
 
     try:
-        clean_
+        clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
+        result_data = json.loads(clean_json)
+        return result_data
+    except Exception:
+        return fallback_response
