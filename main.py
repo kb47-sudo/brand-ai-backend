@@ -10,14 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Professional AI Authenticator & Valuation Engine", version="40.0")
+app = FastAPI(title="Dynamic High-Speed AI Authenticator Engine", version="41.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -28,7 +27,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 def read_root():
     return {
         "status": "Live",
-        "engine": "Professional AI Authenticator Engine v40.0",
+        "engine": "Dynamic High-Speed AI Authenticator Engine v41.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -48,55 +47,54 @@ async def authenticate(
     pil_images = []
     base64_images = []
     
+    # 高速化・通信タイムアウト防止のための超軽量画像処理 (500px, JPEG品質70)
     for file in files:
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((1000, 1000))
+            image.thumbnail((500, 500))
             pil_images.append(image)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=85)
+            image.save(buffered, format="JPEG", quality=70)
             img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
             base64_images.append(img_str)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
-    input_model_info = f"手入力指定型番: {model_number}" if model_number else "手入力なし（画像解析により自動特定）"
+    user_hint = f"ユーザー提示型番: {model_number}" if model_number else "ユーザー提示型番: なし（画像から完全自動解析して判定）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋等のプロ鑑定士です。
-提出された画像と情報から、正確な真贋判定および最新の中古市場流通相場を厳密に算出し、JSON形式でのみ出力してください。
+あなたは日本のコメ兵・大黒屋等で10万点以上を査定してきたトップブランド鑑定士です。
+送信された画像群を先入観なくゼロベースで厳密解析し、正確なJSON形式のみで出力してください。
 
-【査定対象データ】
-・ブランド: {brand}
-・カテゴリ: {category}
-・{input_model_info}
+【対象ブランド】: {brand}
+【対象カテゴリ】: {category}
+【ヒント情報】: {user_hint}
 
-【最重要ルール】
+【絶対精度命令】
 1. 『detected_model』:
-   - 正確な日本語商品名＋公式型番＋画像から解読できる製造番号（シリアル）を出力してください。
-   - 「バムバンド」などの造語・誤記は絶対に禁止です。「バムバッグ」と正確に記載してください。
-   - M44336 の場合の正解表記例: 「ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)」
+   - 画像の形状、柄（モノグラム/ダミエ/エピ等）、構造、縦ライン、ストラップ等から正確な製品名と型番を識別してください。
+   - 例: ダミエ・エベヌのセカンドバッグで縦レザーバンドがある場合は「ルイ・ヴィトン ダミエ・エベヌ サンルイ (型番: N51993)」のようにピンポイント特定してください。過去の無関係な型番を出力することは厳禁です。
 
 2. 『market_prices』:
-   - 日本のブランド中古市場における現実的な買取店（仕入れ）・フリマ・オークションの実勢価格帯（円）を算出してください。
-   - 例: M44336（ディスカバリー・バムバッグPM）の場合、買取店10万円〜13万円、フリマ13.5万円〜16.5万円、オークション12万円〜15万円 のように現在の国内実勢市場価格を正確に提示してください。
+   - 特定した製品（例: サンルイ N51993）の日本国内の中古流通市場（美品〜並品コンディション）の最新実勢相場を正確に算出してください。
+   - 他の高級バッグの相場に引っ張られず、その製品自体の正確な相場帯（買取店・フリマ・オークション）を円単位で出力してください。
 
 3. 『overall_score』 / 『judgment』 / 『message』:
-   - ロゴ刻印（PARISフォント・Rマーク・間隔）、シリアル（BA2260等＝フランス工場製＋製造年週法則）、金具仕上げ（エッジ・メッキ厚）、キャンバスの目から0.0〜100.0のスコアと詳細評価を作成してください。
+   - 柄のアライメント、刻印文字、金具処理、シリアルフォーマット等を多角的検証し、真贋スコア（0〜100）と理由を出力してください。
 
-【出力JSONフォーマット（JSONコードブロックのみ）】
+【出力JSON構造（他の余分な文章・注釈は一切禁止）】
 {{
-  "detected_model": "ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグPM (型番: M44336 / シリアル: BA2260)",
-  "overall_score": 95.0,
+  "detected_model": "正確なブランド・ライン・製品名 (型番: XXXX / シリアル: XXXX)",
+  "overall_score": 92.0,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "鑑定コメント詳細",
+  "message": "刻印、生地の目、金具、シリアルフォーマットに基づく鑑定解説",
   "market_prices": {{
-    "buy_store": "100,000円 ～ 130,000円",
-    "fleamarket": "135,000円 ～ 165,000円",
-    "auction": "120,000円 ～ 150,000円"
+    "buy_store": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
+    "fleamarket": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円",
+    "auction": "◯◯,◯◯◯円 ～ ◯◯,◯◯◯円"
   }},
   "details": [
     {{"name": "ロゴフォント・刻印配置の正確性", "pass": true}},
@@ -123,7 +121,7 @@ async def authenticate(
         except Exception as e:
             last_err = f"Gemini Limit: {str(e)}"
 
-    # --- 2フェーズ: OpenRouter API (フォールバック) ---
+    # --- 2フェーズ: OpenRouter API (高速フォールバック) ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "google/gemini-2.0-flash-exp:free",
@@ -147,7 +145,7 @@ async def authenticate(
                     "model": or_model,
                     "messages": [{"role": "user", "content": content_payload}]
                 }
-                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=25)
+                res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=or_payload, timeout=15)
                 if res.status_code == 200:
                     res_json = res.json()
                     if "choices" in res_json and len(res_json["choices"]) > 0:
@@ -180,13 +178,6 @@ async def authenticate(
     try:
         clean_json = re.sub(r'```json\s*|\s*```', '', response_text).strip()
         result_data = json.loads(clean_json)
-        
-        # 強制補正（「バムバンド」誤記をプログラム側で「バムバッグ」へ最終強制変換）
-        if "detected_model" in result_data and isinstance(result_data["detected_model"], str):
-            result_data["detected_model"] = result_data["detected_model"].replace("バムバンド", "バムバッグ")
-        if "message" in result_data and isinstance(result_data["message"], str):
-            result_data["message"] = result_data["message"].replace("バムバンド", "バムバッグ")
-
         return result_data
     except Exception:
         return fallback_response
