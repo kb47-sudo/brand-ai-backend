@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from google import genai
 
-app = FastAPI(title="Gemini-First Resilient AI Authenticator Engine", version="68.0")
+app = FastAPI(title="Dynamic Market Valuation AI Authenticator Engine", version="69.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +30,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Gemini-First Resilient AI Authenticator v68.0",
+        "engine": "Dynamic Market Valuation AI Authenticator v69.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -40,28 +40,32 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
     user_hint = f"ユーザー手入力型番: {model_number}" if model_number else "ユーザー手入力型番: なし（画像から品名・型番を完全自動判別すること）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋等のプロ鑑定士です。
-送信された部位写真群（最大5枚）を画像から直接解析し、一切の妥協なくリアルな真贋一致率スコア（0〜100%）と正式な品名・型番、3大市場相場をJSON形式でのみ出力してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン等のプロ鑑定士および買取相場アナリストです。
+送信された部位写真群（最大5枚）を画像から直接解析し、品物を特定した上で、リアルな真贋一致率スコア（0〜100%）と、その特定された品物の【日本国内における最新のリアルな実勢相場】を個別に算出してJSON形式でのみ出力してください。
 
 【対象ブランド】: {brand}
 【対象カテゴリ】: {category}
 【ヒント】: {user_hint}
 
-【厳格鑑識＆判定ルール】
+【厳格鑑識＆動的相場算出ルール】
 1. 『detected_model』:
    - 提供された画像（形状、素材、柄、刻印、シリアル）から品物をダイレクトに読み取り、正しい日本語ブランド名・ライン名・商品名・型番を出力してください。
 
-2. 『overall_score』 / 『judgment』:
-   - 根拠に基づいたリアルな一致率パーセンテージ（例: 96.5%、88.0%、65.0% 等）を出力してください。適当な90%等の固定数値は厳禁です。
+2. 『market_prices』 (最重要・動的算出):
+   - 特定した『detected_model』（品名・型番）に基づき、日本国内の二次流通市場での適正相場をそれぞれ個別に算出して具体的に出力してください。
+   - テンプレや他商品の数値を使い回すことは【絶対に禁止】です。必ず画像から特定された商品（例: 時計ならRef番号、バッグならラインや型番）に応じた実勢価格を試算してください。
+     - buy_store: 買取店仕入れ目安（例: "◯◯◯,◯◯◯円 ～ ◯◯◯,◯◯◯円"）
+     - fleamarket: メルカリ・ラクマ等の販売相場
+     - auction: ヤフオク等の落札相場
+
+3. 『overall_score』 / 『judgment』:
+   - 根拠に基づいたリアルな一致率パーセンテージを出力してください。固定値の使い回しは禁止です。
    - 基準内: 95.0%〜100.0%
    - 判定保留: 85.0%〜94.9%
    - 不審あり: 84.9%以下
 
-3. 『suspicious_points』:
+4. 『suspicious_points』:
    - 画像の刻印フォント、金具の仕上げ、ステッチ、シリアル打刻などを精査し、気になる微小な違和感や不審点があれば具体的に日本語配列で抽出してください。違和感が無ければ `[]` を返してください。
-
-4. 『market_prices』:
-   - 判定スコアに関わらず、必ず特定したモデルが本物（正規品）として国内二次流通市場で取引された場合の最新相場（買取店・フリマ・オークションの3つ）を具体的な金額で算出してください。
 
 5. 『details』:
    - 画像で実際に確認できる項目のみ `"status": "PASS"` または `"status": "FAIL"`。写真に写っていない部位は必ず `"status": "UNCHECKED"` とすること。
@@ -75,9 +79,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
   "message": "・刻印精度: 画像から確認できた刻印の精密解説\\n・シリアル適合度: シリアルの解読結果および適合性\\n・金具仕上げ: 金具の仕上げ状態",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "130,000円 ～ 155,000円",
-    "fleamarket": "165,000円 ～ 195,000円",
-    "auction": "150,000円 ～ 180,000円"
+    "buy_store": "特定モデルに応じたリアル買取相場",
+    "fleamarket": "特定モデルに応じたリアルフリマ相場",
+    "auction": "特定モデルに応じたリアルオークション相場"
   }},
   "details": [
     {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
@@ -98,7 +102,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     response_text = None
 
-    # --- 【最優先】第1フェーズ: Google Gemini API (最高精度の本命モデル) ---
+    # --- 第1フェーズ: Google Gemini API (本命モデル) ---
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -109,10 +113,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             if res and res.text:
                 response_text = res.text.strip()
         except Exception:
-            # Geminiが制限（1日20回上限等）にかかった場合は静かに次のフェーズへ移行
             pass
 
-    # --- 第2フェーズ: OpenRouter API (Gemini制限時の自動フォールバック) ---
+    # --- 第2フェーズ: OpenRouter API ---
     if not response_text and OPENROUTER_API_KEY:
         openrouter_models = [
             "meta-llama/llama-3.2-11b-vision-instruct:free",
@@ -147,7 +150,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             except Exception:
                 continue
 
-    # --- 第3フェーズ: Groq API (最終バックアップ) ---
+    # --- 第3フェーズ: Groq API ---
     if not response_text and GROQ_API_KEY:
         try:
             headers = {
