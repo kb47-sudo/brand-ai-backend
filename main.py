@@ -12,7 +12,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="115.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="116.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,7 +31,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v115.0",
+        "engine": "Multi-AI Fallback Engine v116.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -65,9 +65,9 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 20):
 def execute_multi_ai_analysis(prompt: str, base64_images: list):
     logs = []
 
-    # --- フェーズ 1: Gemini REST API ---
+    # --- フェーズ 1: Gemini Direct REST API (3.8-flash 優先) ---
     if GEMINI_API_KEY and base64_images:
-        for g_model in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+        for g_model in ["gemini-3.8-flash", "gemini-2.5-flash"]:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{g_model}:generateContent?key={GEMINI_API_KEY}"
             headers = {"Content-Type": "application/json"}
             
@@ -94,7 +94,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                         return text.strip(), None
             logs.append(f"Gemini({g_model}): {err or 'Empty'}")
 
-    # --- フェーズ 2: OpenRouter API ---
+    # --- フェーズ 2: OpenRouter API (最新標準モデル指定) ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -109,7 +109,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["google/gemini-2.0-flash-lite-001:free", "qwen/qwen-2-vl-72b-instruct:free"]:
+        for or_model in ["google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct"]:
             or_payload = {
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
@@ -121,7 +121,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- フェーズ 3: Groq API ---
+    # --- フェーズ 3: Groq API (Visionモデル) ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -136,7 +136,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
             })
         
         groq_payload = {
-            "model": "llama-3.2-11b-vision-instruct",
+            "model": "llama-3.2-90b-vision-preview",
             "messages": [{"role": "user", "content": content_payload}]
         }
         res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=15)
@@ -173,7 +173,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
    - 画像内の刻印フォント、縫製、金具メッキ、素材感等から算出した本物一致率スコア（0.0〜100.0%）と判定ランク（"基準内" / "注意" / "基準外"）を出力してください。
 
 4. 『message』:
-   - 画像解析から得られたプロ鑑定士としての総評・レポート根拠を日本語の箇条書き（\n区切り）で詳細に記載してください。
+   - 画像解析から得られたプロ鑑定士としての総評・レポート根拠を日本語の箇条書き（\\n区切り）で詳細に記載してください。
 
 5. 『suspicious_points』:
    - 画像で検知された違和感（刻印の歪み、フォント不適合、シリアル法則の不一致等）があれば配列で抽出。無ければ [] とすること。
