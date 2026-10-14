@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="120.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="121.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v120.0",
+        "engine": "Multi-AI Fallback Engine v121.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -71,7 +71,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
         try:
             genai.configure(api_key=GEMINI_API_KEY)
             generation_config = {
-                "temperature": 0.1,
+                "temperature": 0.05,
                 "response_mime_type": "application/json"
             }
             for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
@@ -85,7 +85,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
         except Exception as e:
             logs.append(f"GeminiInit: {str(e)[:80]}")
 
-    # --- フェーズ 2: OpenRouter API (自動ビジョンルーター & 無料モデル) ---
+    # --- フェーズ 2: OpenRouter API ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -112,7 +112,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- フェーズ 3: Groq API (Qwen / Llama Vision) ---
+    # --- フェーズ 3: Groq API ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -141,54 +141,54 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
-    user_hint = f"ユーザー手入力補足: {model_number}" if model_number else "ユーザー手入力補足: なし（画像から型番・正式名称・ライン名を完全自動判別すること）"
+    user_hint = f"ユーザー手入力補足: {model_number}" if model_number else "ユーザー手入力補足: なし（画像から正確な型番・ライン名・品名を特定すること）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋・銀座ラシン等の最高峰ブランド鑑定士および買取市場相場アナリストです。
-送信された複数枚の部位画像（外観、刻印、シリアル・製造番号、金具、内側等）を精密解析し、品物を厳格に特定してください。
+あなたは日本のコメ兵・大黒屋・銀座ラシン・銀蔵で20年以上の実績を持つ最高峰のブランド鑑定士です。
+提供された部位画像群（全体、刻印、シリアル・製造番号、金具、内装等）を精密に視覚解析し、該当する製品の【正確な型番（モデルナンバー）】および【本物一致率】と【最新市場相場】を判定してください。
 
 【指定ブランド】: {brand}
 【指定カテゴリ】: {category}
 【ヒント情報】: {user_hint}
 
-【超厳格判定ルール＆型番完全特定プロトコル】
+【型番特定＆高精度鑑識ルール】
 1. 『detected_model』:
-   - 画像に写っているモノグラム/ダミエ/エピ等のライン名、形状、シリアル刻印パターンから【正式型番（例: M44336, M60017, N41661 等）】を特定し、必ず「[型番: 型番コード] ブランド名 ライン名 正式品名」の形式で出力してください。型番が判定不可能な場合は「[型番: 不明] ブランド名 品名」としてください。
+   - 画像に写っている製品のライン（モノグラム・エクリプス、ダミエ、グラフィット等）、形状（ディスカバリー・バムバッグ、アヴェニュー・スリングバッグ等）、およびシリアル刻印の製造年（例: BA2260→2020年26週フランス製）を多角照合し、ルイ・ヴィトンの正式型番（例: M44388, N41719 等）を特定してください。
+   - 必ず「[型番: 型番コード] ブランド名 ライン名 正式品名」のフォーマットで出力すること。
 
-2. 『market_prices』:
-   - 特定された型番および品物に基づき、日本国内の最新二次流通相場（日本円）を算出してください。
-     - buy_store: 買取店仕入れ相場（例: "50,000円 ～ 65,000円"）
-     - fleamarket: メルカリ・ラクマ販売相場（例: "68,000円 ～ 78,000円"）
-     - auction: ヤフオク落札相場（例: "58,000円 ～ 70,000円"）
+2. 『message』:
+   - 英文や奇妙な単語（"キャンバス_used_" や "MESSキ" など）を一切排除し、完全に自然でプロフェッショナルな日本語の箇条書き（\\n区切り）で鑑識理由を記載すること。
+   - シリアル記号の製造工場と年週の解説、刻印フォントの評価、金具メッキの質感評価を含めること。
 
-3. 『overall_score』 / 『judgment』:
-   - 画像内の刻印フォント、縫製、金具メッキ、素材感等から算出した本物一致率スコア（0.0〜100.0%）と判定ランク（"基準内" / "注意" / "基準外"）を出力してください。
+3. 『market_prices』:
+   - 特定された型番・モデルに基づき、日本国内の二次流通市場の実勢相場（日本円）を算出すること。
 
-4. 『message』:
-   - 画像解析から得られたプロ鑑定士としての総評・レポート根拠を日本語の箇条書き（\\n区切り）で詳細に記載してください。
-
-5. 『suspicious_points』:
-   - 画像で検知された違和感（刻印の歪み、フォント不適合、シリアル法則の不一致等）があれば配列で抽出。無ければ [] とすること。
-
-6. 『details』:
-   - 12個の多角チェック項目（ロゴ刻印、シリアル、金具、縫製等）に対し、画像で確認できた項目は "PASS" または "FAIL"、未確認画像は "UNCHECKED" とすること。
-
-【出力JSONフォーマット（必ずこの形式のJSONのみを出力）】
+【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
 {{
-  "detected_model": "[型番: M44336] ルイ・ヴィトン モノグラム ジッピー・ウォレット",
-  "overall_score": 96.5,
+  "detected_model": "[型番: M44388] ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグ",
+  "overall_score": 97.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番特定: モノグラムライン・最新カードポケット構成よりM44336と特定\\n・刻印解析: France表記フォントおよび文字配置精度は基準内\\n・シリアル適合度: 製造年週と工場コードの整合性を確認",
+  "message": "・型番特定: モノグラム・エクリプスキャンバスとフロントポケット形状、シリアルよりM44388と特定\\n・刻印解析: 内部レザーパッチの「LOUIS VUITTON PARIS made in France」刻印フォントおよび文字配置は正規品基準に適合\\n・シリアル解析: 「BA2260」はフランス工場にて2020年第26週に製造された規則性に完全合致\\n・金具品質: ジッパータブおよびバックル金具の刻印深さとメッキの質感は極めて良好",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "55,000円 ～ 65,000円",
-    "fleamarket": "70,000円 ～ 82,000円",
-    "auction": "60,000円 ～ 72,000円"
+    "buy_store": "110,000円 ～ 130,000円",
+    "fleamarket": "140,000円 ～ 160,000円",
+    "auction": "125,000円 ～ 145,000円"
   }},
   "details": [
     {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
-    {{"name": "2. シリアル/製造番号の規則性・フォント合致", "status": "PASS"}}
+    {{"name": "2. シリアル/製造番号の規則性・フォント合致", "status": "PASS"}},
+    {{"name": "3. レザーパッチの縫製（ステッチ数と糸の質）", "status": "PASS"}},
+    {{"name": "4. モノグラムキャンバスの印刷鮮明度と配置", "status": "PASS"}},
+    {{"name": "5. キャンバス生地の質感と張り", "status": "PASS"}},
+    {{"name": "6. 金具（ジッパー・バックル）のメッキ均一性", "status": "PASS"}},
+    {{"name": "7. 金具ロゴ（LVマーク）の刻印深さとエッジ処理", "status": "PASS"}},
+    {{"name": "8. 縫製の均一性と糸の質（本縫い）", "status": "PASS"}},
+    {{"name": "9. 製造国表記（made in France）の整合性", "status": "PASS"}},
+    {{"name": "10. バックルの作動と構造", "status": "PASS"}},
+    {{"name": "11. シェイプの対称性とカーブの美しさ", "status": "PASS"}},
+    {{"name": "12. 内部構成とポケット設計", "status": "PASS"}}
   ]
 }}
 """
