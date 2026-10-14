@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="121.0")
+app = FastAPI(title="Multi-AI Fallback Engine", version="122.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v121.0",
+        "engine": "Multi-AI Fallback Engine v122.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -44,7 +44,7 @@ def clean_old_jobs():
     for k in expired_keys:
         del JOBS[k]
 
-def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 20):
+def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
     try:
         json_bytes = json.dumps(data_dict).encode('utf-8')
         req = urllib.request.Request(url, data=json_bytes, headers=headers, method='POST')
@@ -105,7 +105,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=20)
+            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=15)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -131,7 +131,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "model": groq_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=15)
+            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -157,7 +157,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
    - 必ず「[型番: 型番コード] ブランド名 ライン名 正式品名」のフォーマットで出力すること。
 
 2. 『message』:
-   - 英文や奇妙な単語（"キャンバス_used_" や "MESSキ" など）を一切排除し、完全に自然でプロフェッショナルな日本語の箇条書き（\\n区切り）で鑑識理由を記載すること。
+   - 英文や不自然な単語を一切排除し、完全で自然な日本語の箇条書き（\\n区切り）で鑑識理由を記載すること。
    - シリアル記号の製造工場と年週の解説、刻印フォントの評価、金具メッキの質感評価を含めること。
 
 3. 『market_prices』:
@@ -239,11 +239,12 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((800, 800))
+            # 画像を600x600に超軽量圧縮してタイムアウトを防ぐ
+            image.thumbnail((600, 600))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
 
             buffered = io.BytesIO()
-            image.save(buffered, format="JPEG", quality=80)
+            image.save(buffered, format="JPEG", quality=65)
             img_bytes = buffered.getvalue()
             
             pil_images.append(Image.open(io.BytesIO(img_bytes)))
