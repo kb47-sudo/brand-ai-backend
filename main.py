@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="125.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="126.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator & Market Engine v125.0",
+        "engine": "Ultra Multi-AI Authenticator & Market Engine v126.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -63,10 +63,11 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
     except Exception as e:
         return None, str(e)
 
+# 引数エラー(TypeError)を完全修正: pil_images を正しく受け取り
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- 第1優先: Gemini API ---
+    # --- 第1優先: Gemini API (公式SDK) ---
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -112,7 +113,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- 第3優先: Groq API ---
+    # --- 第3優先: Groq API (モデル名修正済) ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -126,7 +127,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
         
-        for groq_model in ["llama-3.2-11b-vision-preview", "llama-3.3-70b-versatile"]:
+        for groq_model in ["llama-3.2-11b-vision-instruct", "llama-3.3-70b-versatile"]:
             groq_payload = {
                 "model": groq_model,
                 "messages": [{"role": "user", "content": content_payload}]
