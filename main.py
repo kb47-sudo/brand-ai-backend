@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator Engine (Dynamic Gemini)", version="140.0")
+app = FastAPI(title="Pro Authenticator Engine (Gemini Fixed)", version="141.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v140.0 (Dynamic Model Resolver)",
+        "engine": "Pro Authenticator Engine v141.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -38,54 +38,31 @@ def clean_old_jobs():
         if now - JOBS[k].get("created_at", now) > 900:
             JOBS.pop(k, None)
 
-def get_working_gemini_model():
-    """Google APIから利用可能なモデル一覧を取得し、画像解析可能なモデル名を返す"""
+def execute_gemini_analysis(prompt: str, pil_images: list):
     if not GEMINI_API_KEY:
         return None, "GEMINI_API_KEY が設定されていません。"
-    
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        # 利用可能なモデル一覧を動的に取得
-        available_models = []
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                # 'models/gemini-xxxx' から 'gemini-xxxx' を抽出
-                name = m.name.replace('models/', '')
-                available_models.append(name)
-        
-        # 優先順位（flash系 -> pro系）でソート
-        flash_models = [m for m in available_models if 'flash' in m]
-        pro_models = [m for m in available_models if 'pro' in m]
-        
-        candidate_models = flash_models + pro_models + available_models
-        if candidate_models:
-            return candidate_models, None
-        return None, "利用可能なGeminiモデルが見つかりませんでした。"
-    except Exception as e:
-        return None, f"モデル一覧取得失敗: {str(e)}"
-
-def execute_gemini_analysis(prompt: str, pil_images: list):
-    candidate_models, err = get_working_gemini_model()
-    if err or not candidate_models:
-        return None, err or "モデル取得エラー"
 
     logs = []
-    config = genai.types.GenerationConfig(
-        temperature=0.1,
-        response_mime_type="application/json"
-    )
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        config = {
+            "temperature": 0.1,
+            "response_mime_type": "application/json"
+        }
+        
+        # 確実に稼働する主要モデルリスト
+        for g_model in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]:
+            try:
+                model = genai.GenerativeModel(model_name=g_model, generation_config=config)
+                res = model.generate_content([prompt] + pil_images)
+                if res and hasattr(res, 'text') and res.text:
+                    return res.text.strip(), None
+            except Exception as g_err:
+                logs.append(f"{g_model}: {str(g_err)[:80]}")
+    except Exception as e:
+        logs.append(f"GeminiInitError: {str(e)[:80]}")
 
-    # 取得した有効モデルリストから順次試行
-    for g_model in candidate_models:
-        try:
-            model = genai.GenerativeModel(model_name=g_model, generation_config=config)
-            res = model.generate_content([prompt] + pil_images)
-            if res and hasattr(res, 'text') and res.text:
-                return res.text.strip(), None
-        except Exception as g_err:
-            logs.append(f"{g_model}: {str(g_err)[:80]}")
-
-    return None, f"動的モデル全滅詳細: {' | '.join(logs[:3])}"
+    return None, f"Gemini解析エラー詳細: {' | '.join(logs)}"
 
 # Step 1: モデル候補3選 検出処理
 def process_candidate_job(job_id: str, brand: str, category: str, pil_images: list):
