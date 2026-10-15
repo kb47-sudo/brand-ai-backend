@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator Engine", version="129.0")
+app = FastAPI(title="Pro Authenticator & Market Valuation Engine", version="131.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator Engine v129.0",
+        "engine": "Pro Authenticator & Market Valuation Engine v131.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -143,31 +143,37 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
     prompt = f"""
-あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座等で20年以上の実績を持つ最高峰プロブランド鑑定士および二次流通相場アナリストです。
+あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座、ジャックロード等で20年以上の実績を持つプロ鑑定士および二次流通市場相場アナリストです。
 
 【入力指定情報】
 - ブランド: {brand}
 - カテゴリ: {category}
 - 条件指定（型番/付属品/コンディションランク）: {model_number}
 
-【8部位画像高精細真贋＆ランク・付属品連動相場アルゴリズム】
+【プロ鑑定＆市場相場算出の超厳格ルール】
 1. 『detected_model』:
-   - ユーザーからの指定型番（Ref番号）がある場合は送信画像（文字盤・刻印・ケース・ブレス・シリアル）が【その型番と100%適合するか】を厳密照合すること。
-   - 適合OKの場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
-   - 矛盾・不一致がある場合: 「[型番不適合アラート] 画像仕様と指定型番が異なります」
+   - ユーザーから指定型番（Ref番号やモデル型番）がある場合、送信された部位画像（文字盤、素材、柄、刻印、形状、金具等）が【その型番と100%適合するか】を精密照合すること。
+   - 適合している場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
+   - 矛盾・不一致がある場合: 「[型番不適合アラート] 画像の仕様と指定型番が一致しません（正解候補: ○○）」
+   - 型番指定がない場合: 画像から正解の型番を完全自動特定して出力すること。
 
 2. 『market_prices』:
-   - 指定された「コンディションランク（S/A/B/C）」および「付属品状態（ギャラ・箱等）」を厳密に反映した最新の日本国内二次流通相場（日本円）を算出すること。
-     - buy_store: 指定ランク・条件での現実的な買取仕入れ相場
-     - fleamarket: メルカリ・ラクマ実勢価格
+   - **【対象範囲】**: 「本体のみ」や「ジャンク品（不動・動作不可・傷多数）」もプロの買取対象として正確に相場計算すること。
+   - **【除外ルール】**: 「パーツ単体（文字盤単体、ベルトのコマ単体、空箱等）」や「相場から大きく逸脱した異常値・吊り上げ価格」は一切除外し、該当する本体・ジャンク品そのものの実勢価格を算出すること。
+   - 指定された「コンディションランク（S/A/B/C/ジャンク）」および「付属品状態（本体のみ/保証書あり等）」に合致する日本国内のリアルな取引価格を算出してください。
+     - buy_store: 指定条件・状態でのプロ買取店仕入れ価格目安（例: "1,950,000円 ～ 2,100,000円"、ジャンク等の場合は "30,000円 ～ 50,000円 (要修理品相場)"）
+     - fleamarket: メルカリ・ラクマ実勢販売相場
      - auction: ヤフオク・業者オークション落札相場
-     - full_set_estimate: 付属品完備かつSランク美品だった場合の最高買取水準
+     - full_set_estimate: もし「付属品完備かつSランク美品」だった場合の最高買取水準参考値
 
 3. 『message』:
-   - 日本のプロ鑑定士の思考ロジックに基づき、完全な日本語の箇条書き（\\n区切り）で詳細に記述すること。
-     ・型番・モデル照合結果（画像アングルからの仕様適合度）
-     ・コンディションランクおよび付属品有無による相場変動根拠
-     ・8部位画像解析による真贋判定理由（フォント精度、シリアル法則、金属・仕上げ加工の品質）
+   - 買取現場のプロ鑑定士の思考プロセスに基づき、完全で自然な日本語の箇条書き（\\n区切り）で詳細に出力すること。
+     ・型番・モデル適合照合結果（画像アングルからの仕様適合度）
+     ・コンディションランク（美品〜ジャンク）および付属品（本体のみ/保証書有無）による相場影響の解説
+     ・8部位画像解析による真贋判定理由（刻印フォント精度、シリアル法則、金属・仕上げ品質）
+
+4. 『details』:
+   - 12個の多角チェック項目について、画像で確認できた場合は "PASS" または "FAIL"、写真に写っていない部位は "UNCHECKED" とすること。
 
 【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
 {{
@@ -175,13 +181,13 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
   "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・ランク・付属品相場評価: Aランク美品かつギャランティカード付属指定に基づき、適正市場価格を算出\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度およびGlidelock機構の動作構造はきわめて良好",
+  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・ランク・付属品相場評価: 指定条件（本体のみ/Cランク等）に基づき、パーツ単体データを除外した正確な実勢買取相場を算出\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度および動作構造の整合性を確認",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "1,950,000円 ～ 2,100,000円",
-    "fleamarket": "2,200,000円 ～ 2,400,000円",
-    "auction": "2,050,000円 ～ 2,200,000円",
-    "full_set_estimate": "2,250,000円（付属品完備・Sランク時）"
+    "buy_store": "1,650,000円 ～ 1,800,000円",
+    "fleamarket": "1,850,000円 ～ 2,000,000円",
+    "auction": "1,700,000円 ～ 1,850,000円",
+    "full_set_estimate": "2,250,000円（付属品完備・Sランク時参考）"
   }},
   "details": [
     {{"name": "1. ブランドロゴフォント・文字配置の正確性", "status": "PASS"}},
@@ -204,7 +210,6 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     if response_text:
         try:
-            # 思考タグ・Markdown囲みの完全除去
             cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
             cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
             cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
