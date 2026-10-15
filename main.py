@@ -13,9 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="128.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator Engine", version="129.0")
 
-# CORS設定の完全開通
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,7 +33,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator & Market Engine v128.0",
+        "engine": "Ultra Multi-AI Authenticator Engine v129.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -46,7 +45,7 @@ def clean_old_jobs():
         if now - JOBS[k].get("created_at", now) > 900:
             JOBS.pop(k, None)
 
-def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
+def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 30):
     try:
         json_bytes = json.dumps(data_dict).encode('utf-8')
         req = urllib.request.Request(url, data=json_bytes, headers=headers, method='POST')
@@ -76,7 +75,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "temperature": 0.05,
                 "response_mime_type": "application/json"
             }
-            for g_model in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+            for g_model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
                     model = genai.GenerativeModel(model_name=g_model, generation_config=generation_config)
                     res = model.generate_content([prompt] + pil_images)
@@ -107,7 +106,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=20)
+            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=25)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -133,7 +132,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "model": groq_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=15)
+            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=20)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -205,8 +204,9 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     if response_text:
         try:
-            # 高度なJSONクレンジング処理
-            cleaned_text = re.sub(r'```json\s*', '', response_text)
+            # 思考タグ・Markdown囲みの完全除去
+            cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+            cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
             cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
             
             json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
