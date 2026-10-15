@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="124.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="125.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator & Market Engine v124.0",
+        "engine": "Ultra Multi-AI Authenticator & Market Engine v125.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -147,41 +147,40 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 【入力指定情報】
 - ブランド: {brand}
 - カテゴリ: {category}
-- 条件指定（型番/付属品/コンディション）: {model_number}
+- 条件指定（型番/付属品/コンディションランク）: {model_number}
 
-【超厳格型番適合性チェック＆動的相場分析プロトコル】
+【8部位画像高精細真贋＆ランク・付属品連動相場アルゴリズム】
 1. 『detected_model』:
-   - ユーザーから指定型番の入力がある場合、送信された画像（文字盤、素材、柄、刻印、形状等）が【その型番と100%適合しているか】を照合してください。
-   - 適合している場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
-   - 型番入力がない場合: 画像から正解の型番を自動特定し「[型番: 自動特定型番] ブランド名 ライン名 品名」
-   - 矛盾がある場合: 「[型番不適合アラート] 画像は〇〇ですが型番は××です」の形式で出力すること。
+   - ユーザーからの指定型番（Ref番号）がある場合は送信画像（文字盤・刻印・ケース・ブレス・シリアル）が【その型番と100%適合するか】を厳密照合すること。
+   - 適合OKの場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
+   - 矛盾・不一致がある場合: 「[型番不適合アラート] 画像仕様と指定型番が異なります」
 
 2. 『market_prices』:
-   - 指定された「付属品の有無（保証書・箱・コマ等）」および「コンディションランク」を厳密に考慮し、現在の日本国内二次流通相場（日本円）を算出してください。
-     - buy_store: 指定条件での買取店仕入れ価格目安（例: "1,850,000円 ～ 2,000,000円"）
+   - 指定された「コンディションランク（S/A/B/C）」および「付属品状態（ギャラ・箱等）」を厳密に反映した最新の日本国内二次流通相場（日本円）を算出すること。
+     - buy_store: 指定ランク・条件での現実的な買取仕入れ相場
      - fleamarket: メルカリ・ラクマ実勢価格
      - auction: ヤフオク・業者オークション落札相場
-     - full_set_estimate: もし「ギャランティ・箱など付属品が完備（フルセット）」だった場合の買取上限目安（例: "2,200,000円"）
+     - full_set_estimate: 付属品完備かつSランク美品だった場合の最高買取水準
 
 3. 『message』:
-   - 箇条書き（\\n区切り）で以下を出力してください。
-     ・型番照合・適合性評価（入力型番と画像の合致度）
-     ・付属品による相場変動の解説（保証書有無でいくら変わるか等）
-     ・ロゴ刻印・シリアル・仕上げ精度の真贋理由
+   - 日本のプロ鑑定士の思考ロジックに基づき、完全な日本語の箇条書き（\\n区切り）で詳細に記述すること。
+     ・型番・モデル照合結果（画像アングルからの仕様適合度）
+     ・コンディションランクおよび付属品有無による相場変動根拠
+     ・8部位画像解析による真贋判定理由（フォント精度、シリアル法則、金属・仕上げ加工の品質）
 
 【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
 {{
-  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合確認)",
+  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合確認OK)",
   "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番適合確認: 入力されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は100%合致\\n・付属品相場評価: ギャランティカードあり指定のため、本体のみ査定より約15万〜20万円高額評価が適用\\n・刻印解析: ルーレット刻印およびシリアル深さは正規品基準に完全適合\\n・文字盤精度: ROLEXロゴの印刷浮きおよびインデックスの夜光塗料盛りは極めて良好",
+  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・ランク・付属品相場評価: Aランク美品かつギャランティカード付属指定に基づき、適正市場価格を算出\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度およびGlidelock機構の動作構造はきわめて良好",
   "suspicious_points": [],
   "market_prices": {{
     "buy_store": "1,950,000円 ～ 2,100,000円",
     "fleamarket": "2,200,000円 ～ 2,400,000円",
     "auction": "2,050,000円 ～ 2,200,000円",
-    "full_set_estimate": "2,200,000円（付属品完備時の最高買取水準）"
+    "full_set_estimate": "2,250,000円（付属品完備・Sランク時）"
   }},
   "details": [
     {{"name": "1. ブランドロゴフォント・文字配置の正確性", "status": "PASS"}},
