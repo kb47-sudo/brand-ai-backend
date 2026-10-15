@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Multi-AI Fallback Engine", version="122.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="123.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Multi-AI Fallback Engine v122.0",
+        "engine": "Ultra Multi-AI Authenticator & Market Engine v123.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -40,11 +40,11 @@ def read_root():
 
 def clean_old_jobs():
     now = time.time()
-    expired_keys = [k for k, v in JOBS.items() if now - v.get("created_at", now) > 600]
+    expired_keys = [k for k, v in JOBS.items() if now - v.get("created_at", now) > 900]
     for k in expired_keys:
         del JOBS[k]
 
-def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
+def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
     try:
         json_bytes = json.dumps(data_dict).encode('utf-8')
         req = urllib.request.Request(url, data=json_bytes, headers=headers, method='POST')
@@ -66,7 +66,7 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 15):
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- フェーズ 1: Gemini (Google SDK経由) ---
+    # --- 第1優先: Gemini API (SDK経由・超高速＆高精度) ---
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -74,7 +74,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "temperature": 0.05,
                 "response_mime_type": "application/json"
             }
-            for g_model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for g_model in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
                 try:
                     model = genai.GenerativeModel(model_name=g_model, generation_config=generation_config)
                     res = model.generate_content([prompt] + pil_images)
@@ -85,7 +85,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
         except Exception as e:
             logs.append(f"GeminiInit: {str(e)[:80]}")
 
-    # --- フェーズ 2: OpenRouter API ---
+    # --- 第2優先: OpenRouter API (自動ビジョンルーター & 最新無料モデル) ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -100,19 +100,19 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["openrouter/free", "google/gemma-4-26b-a4b-it:free"]:
+        for or_model in ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.2-11b-vision-instruct:free"]:
             or_payload = {
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=15)
+            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=20)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- フェーズ 3: Groq API ---
+    # --- 第3優先: Groq API (超高速推論) ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -126,12 +126,12 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
         
-        for groq_model in ["qwen-2.5-32b", "llama-3.3-70b-versatile"]:
+        for groq_model in ["llama-3.2-11b-vision-preview", "llama-3.3-70b-versatile"]:
             groq_payload = {
                 "model": groq_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=12)
+            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=15)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -141,54 +141,69 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
-    user_hint = f"ユーザー手入力補足: {model_number}" if model_number else "ユーザー手入力補足: なし（画像から正確な型番・ライン名・品名を特定すること）"
+    user_hint = f"手入力補足型番/情報: {model_number}" if model_number else "手入力補足: なし（画像から型番・リファレンス・ライン・正式名称を完全自動特定すること）"
 
     prompt = f"""
-あなたは日本のコメ兵・大黒屋・銀座ラシン・銀蔵で20年以上の実績を持つ最高峰のブランド鑑定士です。
-提供された部位画像群（全体、刻印、シリアル・製造番号、金具、内装等）を精密に視覚解析し、該当する製品の【正確な型番（モデルナンバー）】および【本物一致率】と【最新市場相場】を判定してください。
+あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座、ジャックロード等で20年以上の鑑定歴を持つ最高峰プロブランド鑑定士および二次流通相場アナリストです。
 
-【指定ブランド】: {brand}
-【指定カテゴリ】: {category}
-【ヒント情報】: {user_hint}
+【入力指定情報】
+- ブランド: {brand}
+- カテゴリ: {category}
+- {user_hint}
 
-【型番特定＆高精度鑑識ルール】
+【鑑識対象高級時計プロトコル（該当時）】
+ROLEX(デイトナ, サブマリーナー, GMTマスターII, デイトジャスト等), PATEK PHILIPPE(ノーチラス, アクアノート等), AUDEMARS PIGUET(ロイヤルオーク等), VACHERON CONSTANTIN, OMEGA, CARTIER, GRAND SEIKO, IWC, HUBLOT, BREGUET, A.LANGE & SÖHNE, RICHARD MILLE, TAG HEUER, BREITLING, TUDOR, ZENITH, PANERAI, JAEGER-LECOULTRE, BVLGARI, CHANEL, HERMES, LOUIS VUITTON等。
+
+【超精密鑑定＆型番特定アルゴリズム】
 1. 『detected_model』:
-   - 画像に写っている製品のライン（モノグラム・エクリプス、ダミエ、グラフィット等）、形状（ディスカバリー・バムバッグ、アヴェニュー・スリングバッグ等）、およびシリアル刻印の製造年（例: BA2260→2020年26週フランス製）を多角照合し、ルイ・ヴィトンの正式型番（例: M44388, N41719 等）を特定してください。
-   - 必ず「[型番: 型番コード] ブランド名 ライン名 正式品名」のフォーマットで出力すること。
+   - 画像（文字盤、針、インデックス、ケース、ベゼル、刻印、裏蓋、シリアル・Ref刻印、ブレス・バックル等）から、正式型番（Ref.番号 / Model番号）を完全に照合特定してください。
+   - 例: 「[型番: Ref.126610LN] ロレックス サブマリーナー デイト」や「[型番: M44388] ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグ」のように必ず「[型番: XXX] ブランド名 ライン名/シリーズ名 品名」のフォーマットで出力すること。
 
-2. 『message』:
-   - 英文や不自然な単語を一切排除し、完全で自然な日本語の箇条書き（\\n区切り）で鑑識理由を記載すること。
-   - シリアル記号の製造工場と年週の解説、刻印フォントの評価、金具メッキの質感評価を含めること。
+2. 『overall_score』 / 『judgment』:
+   - 20項目を超える多角チェックからリアルな真贋一致率（0.0%〜100.0%）を算出し、「基準内」「注意」「基準外」の判定ランクを設定してください。
 
-3. 『market_prices』:
-   - 特定された型番・モデルに基づき、日本国内の二次流通市場の実勢相場（日本円）を算出すること。
+3. 『message』:
+   - 日本のプロ鑑定士の思考プロセスに基づき、完全で美しい日本語の箇条書き（\\n区切り）で以下を詳細出力してください。
+     ・型番特定根拠（デザイン、文字盤特徴、シリアル・Refの照合）
+     ・ロゴフォント・刻印の精度評価（エッジ、真円性、深さ）
+     ・シリアル・製造年週の規則性合致評価
+     ・素材・金具・仕上げ処理（仕上げ磨き、メッキ、面取り）の評価
 
-【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
+4. 『suspicious_points』:
+   - 画像上で見受けられる微細な違和感（刻印の浅さ、文字盤印刷の滲み、シリアル規則性のズレ等）があれば配列で列挙。問題なければ [] とすること。
+
+5. 『market_prices』:
+   - 特定型番に基づき、日本国内の直近実勢二次流通相場（買取店仕入れ価格、フリマ実勢、ヤフオク/業者オークション落札相場）をリアルに算出してください。
+
+6. 『details』:
+   - 以下の12個の多角評価項目について、画像で確認できたものは "PASS" または "FAIL"、写っていない部位は "UNCHECKED" で判定すること。
+
+【出力JSONフォーマット（必ずこの構造のJSONのみを出力）】
 {{
-  "detected_model": "[型番: M44388] ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグ",
-  "overall_score": 97.5,
+  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト",
+  "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番特定: モノグラム・エクリプスキャンバスとフロントポケット形状、シリアルよりM44388と特定\\n・刻印解析: 内部レザーパッチの「LOUIS VUITTON PARIS made in France」刻印フォントおよび文字配置は正規品基準に適合\\n・シリアル解析: 「BA2260」はフランス工場にて2020年第26週に製造された規則性に完全合致\\n・金具品質: ジッパータブおよびバックル金具の刻印深さとメッキの質感は極めて良好",
+  "message": "・型番特定: 黒文字盤・セラクロムベゼルおよびケース形状、シリアル刻印よりRef.126610LNと特定\\n・文字盤解析: ROLEXロゴおよびクラウンマークの印刷精度、インデックスの夜光塗料盛りの均一性は正規品基準に完全適合\\n・刻印解析: ルーレット刻印（内文字盤フチ）の「ROLEX」フォントおよびシリアル刻印の深さは極めて鮮明\\n・ブレス・バックル: オイスターブレスのセーフティキャッチ動作およびGlidelock機構の噛み合わせは極めて良好",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "110,000円 ～ 130,000円",
-    "fleamarket": "140,000円 ～ 160,000円",
-    "auction": "125,000円 ～ 145,000円"
+    "buy_store": "1,850,000円 ～ 2,000,000円",
+    "fleamarket": "2,100,000円 ～ 2,300,000円",
+    "auction": "1,950,000円 ～ 2,150,000円"
   }},
   "details": [
-    {{"name": "1. ロゴフォントの真円性・文字間隔の正確性", "status": "PASS"}},
-    {{"name": "2. シリアル/製造番号の規則性・フォント合致", "status": "PASS"}},
-    {{"name": "3. レザーパッチの縫製（ステッチ数と糸の質）", "status": "PASS"}},
-    {{"name": "4. モノグラムキャンバスの印刷鮮明度と配置", "status": "PASS"}},
-    {{"name": "5. キャンバス生地の質感と張り", "status": "PASS"}},
-    {{"name": "6. 金具（ジッパー・バックル）のメッキ均一性", "status": "PASS"}},
-    {{"name": "7. 金具ロゴ（LVマーク）の刻印深さとエッジ処理", "status": "PASS"}},
-    {{"name": "8. 縫製の均一性と糸の質（本縫い）", "status": "PASS"}},
-    {{"name": "9. 製造国表記（made in France）の整合性", "status": "PASS"}},
-    {{"name": "10. バックルの作動と構造", "status": "PASS"}},
-    {{"name": "11. シェイプの対称性とカーブの美しさ", "status": "PASS"}},
-    {{"name": "12. 内部構成とポケット設計", "status": "PASS"}}
+    {{"name": "1. ブランドロゴフォント・文字配置の正確性", "status": "PASS"}},
+    {{"name": "2. シリアル/Ref型番刻印の規則性・深さ", "status": "PASS"}},
+    {{"name": "3. 文字盤印刷の精細さと立体感", "status": "PASS"}},
+    {{"name": "4. 針の面取り仕上げと夜光塗料塗布精度", "status": "PASS"}},
+    {{"name": "5. ベゼル・目盛り刻印のフォントと仕上げ", "status": "PASS"}},
+    {{"name": "6. 風防（サファイアガラス）透かし・透過性", "status": "PASS"}},
+    {{"name": "7. ケースライン・ラグ部分の仕上げ（ヘアライン/ポリッシュ）", "status": "PASS"}},
+    {{"name": "8. リューズ刻印と防水パッキン溝の構造", "status": "PASS"}},
+    {{"name": "9. バックル/クラスプ刻印の鮮明度と作動感", "status": "PASS"}},
+    {{"name": "10. 裏蓋刻印・ネジ山の精度", "status": "PASS"}},
+    {{"name": "11. ブレスコマの隙間・可動部のガタツキ", "status": "PASS"}},
+    {{"name": "12. 全体コンディションと二次流通適合度", "status": "PASS"}}
   ]
 }}
 """
@@ -239,7 +254,7 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            # 画像を600x600に超軽量圧縮してタイムアウトを防ぐ
+            # 600x600に超軽量化して通信タイムアウトを完封
             image.thumbnail((600, 600))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
 
