@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="123.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="124.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator & Market Engine v123.0",
+        "engine": "Ultra Multi-AI Authenticator & Market Engine v124.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -66,7 +66,7 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- 第1優先: Gemini API (SDK経由・超高速＆高精度) ---
+    # --- 第1優先: Gemini API ---
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -85,7 +85,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
         except Exception as e:
             logs.append(f"GeminiInit: {str(e)[:80]}")
 
-    # --- 第2優先: OpenRouter API (自動ビジョンルーター & 最新無料モデル) ---
+    # --- 第2優先: OpenRouter API ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -100,7 +100,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["openrouter/free", "google/gemini-2.0-flash-exp:free", "meta-llama/llama-3.2-11b-vision-instruct:free"]:
+        for or_model in ["openrouter/free", "google/gemini-2.0-flash-exp:free"]:
             or_payload = {
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
@@ -112,7 +112,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- 第3優先: Groq API (超高速推論) ---
+    # --- 第3優先: Groq API ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -141,55 +141,47 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
-    user_hint = f"手入力補足型番/情報: {model_number}" if model_number else "手入力補足: なし（画像から型番・リファレンス・ライン・正式名称を完全自動特定すること）"
-
     prompt = f"""
-あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座、ジャックロード等で20年以上の鑑定歴を持つ最高峰プロブランド鑑定士および二次流通相場アナリストです。
+あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座等で20年以上の実績を持つ最高峰プロブランド鑑定士および二次流通相場アナリストです。
 
 【入力指定情報】
 - ブランド: {brand}
 - カテゴリ: {category}
-- {user_hint}
+- 条件指定（型番/付属品/コンディション）: {model_number}
 
-【鑑識対象高級時計プロトコル（該当時）】
-ROLEX(デイトナ, サブマリーナー, GMTマスターII, デイトジャスト等), PATEK PHILIPPE(ノーチラス, アクアノート等), AUDEMARS PIGUET(ロイヤルオーク等), VACHERON CONSTANTIN, OMEGA, CARTIER, GRAND SEIKO, IWC, HUBLOT, BREGUET, A.LANGE & SÖHNE, RICHARD MILLE, TAG HEUER, BREITLING, TUDOR, ZENITH, PANERAI, JAEGER-LECOULTRE, BVLGARI, CHANEL, HERMES, LOUIS VUITTON等。
-
-【超精密鑑定＆型番特定アルゴリズム】
+【超厳格型番適合性チェック＆動的相場分析プロトコル】
 1. 『detected_model』:
-   - 画像（文字盤、針、インデックス、ケース、ベゼル、刻印、裏蓋、シリアル・Ref刻印、ブレス・バックル等）から、正式型番（Ref.番号 / Model番号）を完全に照合特定してください。
-   - 例: 「[型番: Ref.126610LN] ロレックス サブマリーナー デイト」や「[型番: M44388] ルイ・ヴィトン モノグラム・エクリプス ディスカバリー・バムバッグ」のように必ず「[型番: XXX] ブランド名 ライン名/シリーズ名 品名」のフォーマットで出力すること。
+   - ユーザーから指定型番の入力がある場合、送信された画像（文字盤、素材、柄、刻印、形状等）が【その型番と100%適合しているか】を照合してください。
+   - 適合している場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
+   - 型番入力がない場合: 画像から正解の型番を自動特定し「[型番: 自動特定型番] ブランド名 ライン名 品名」
+   - 矛盾がある場合: 「[型番不適合アラート] 画像は〇〇ですが型番は××です」の形式で出力すること。
 
-2. 『overall_score』 / 『judgment』:
-   - 20項目を超える多角チェックからリアルな真贋一致率（0.0%〜100.0%）を算出し、「基準内」「注意」「基準外」の判定ランクを設定してください。
+2. 『market_prices』:
+   - 指定された「付属品の有無（保証書・箱・コマ等）」および「コンディションランク」を厳密に考慮し、現在の日本国内二次流通相場（日本円）を算出してください。
+     - buy_store: 指定条件での買取店仕入れ価格目安（例: "1,850,000円 ～ 2,000,000円"）
+     - fleamarket: メルカリ・ラクマ実勢価格
+     - auction: ヤフオク・業者オークション落札相場
+     - full_set_estimate: もし「ギャランティ・箱など付属品が完備（フルセット）」だった場合の買取上限目安（例: "2,200,000円"）
 
 3. 『message』:
-   - 日本のプロ鑑定士の思考プロセスに基づき、完全で美しい日本語の箇条書き（\\n区切り）で以下を詳細出力してください。
-     ・型番特定根拠（デザイン、文字盤特徴、シリアル・Refの照合）
-     ・ロゴフォント・刻印の精度評価（エッジ、真円性、深さ）
-     ・シリアル・製造年週の規則性合致評価
-     ・素材・金具・仕上げ処理（仕上げ磨き、メッキ、面取り）の評価
+   - 箇条書き（\\n区切り）で以下を出力してください。
+     ・型番照合・適合性評価（入力型番と画像の合致度）
+     ・付属品による相場変動の解説（保証書有無でいくら変わるか等）
+     ・ロゴ刻印・シリアル・仕上げ精度の真贋理由
 
-4. 『suspicious_points』:
-   - 画像上で見受けられる微細な違和感（刻印の浅さ、文字盤印刷の滲み、シリアル規則性のズレ等）があれば配列で列挙。問題なければ [] とすること。
-
-5. 『market_prices』:
-   - 特定型番に基づき、日本国内の直近実勢二次流通相場（買取店仕入れ価格、フリマ実勢、ヤフオク/業者オークション落札相場）をリアルに算出してください。
-
-6. 『details』:
-   - 以下の12個の多角評価項目について、画像で確認できたものは "PASS" または "FAIL"、写っていない部位は "UNCHECKED" で判定すること。
-
-【出力JSONフォーマット（必ずこの構造のJSONのみを出力）】
+【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
 {{
-  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト",
+  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合確認)",
   "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番特定: 黒文字盤・セラクロムベゼルおよびケース形状、シリアル刻印よりRef.126610LNと特定\\n・文字盤解析: ROLEXロゴおよびクラウンマークの印刷精度、インデックスの夜光塗料盛りの均一性は正規品基準に完全適合\\n・刻印解析: ルーレット刻印（内文字盤フチ）の「ROLEX」フォントおよびシリアル刻印の深さは極めて鮮明\\n・ブレス・バックル: オイスターブレスのセーフティキャッチ動作およびGlidelock機構の噛み合わせは極めて良好",
+  "message": "・型番適合確認: 入力されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は100%合致\\n・付属品相場評価: ギャランティカードあり指定のため、本体のみ査定より約15万〜20万円高額評価が適用\\n・刻印解析: ルーレット刻印およびシリアル深さは正規品基準に完全適合\\n・文字盤精度: ROLEXロゴの印刷浮きおよびインデックスの夜光塗料盛りは極めて良好",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "1,850,000円 ～ 2,000,000円",
-    "fleamarket": "2,100,000円 ～ 2,300,000円",
-    "auction": "1,950,000円 ～ 2,150,000円"
+    "buy_store": "1,950,000円 ～ 2,100,000円",
+    "fleamarket": "2,200,000円 ～ 2,400,000円",
+    "auction": "2,050,000円 ～ 2,200,000円",
+    "full_set_estimate": "2,200,000円（付属品完備時の最高買取水準）"
   }},
   "details": [
     {{"name": "1. ブランドロゴフォント・文字配置の正確性", "status": "PASS"}},
@@ -198,9 +190,9 @@ ROLEX(デイトナ, サブマリーナー, GMTマスターII, デイトジャス
     {{"name": "4. 針の面取り仕上げと夜光塗料塗布精度", "status": "PASS"}},
     {{"name": "5. ベゼル・目盛り刻印のフォントと仕上げ", "status": "PASS"}},
     {{"name": "6. 風防（サファイアガラス）透かし・透過性", "status": "PASS"}},
-    {{"name": "7. ケースライン・ラグ部分の仕上げ（ヘアライン/ポリッシュ）", "status": "PASS"}},
-    {{"name": "8. リューズ刻印と防水パッキン溝の構造", "status": "PASS"}},
-    {{"name": "9. バックル/クラスプ刻印の鮮明度と作動感", "status": "PASS"}},
+    {{"name": "7. ケースライン・ラグ部分の仕上げ", "status": "PASS"}},
+    {{"name": "8. リューズ刻印と防水パッキン構造", "status": "PASS"}},
+    {{"name": "9. バックル/クラスプ刻印の鮮明度", "status": "PASS"}},
     {{"name": "10. 裏蓋刻印・ネジ山の精度", "status": "PASS"}},
     {{"name": "11. ブレスコマの隙間・可動部のガタツキ", "status": "PASS"}},
     {{"name": "12. 全体コンディションと二次流通適合度", "status": "PASS"}}
@@ -231,7 +223,7 @@ ROLEX(デイトナ, サブマリーナー, GMTマスターII, デイトジャス
             "status_code": "ERROR",
             "message": f"【解析失敗詳細】:\n{err_msg}",
             "suspicious_points": ["AI応答の取得に失敗しました"],
-            "market_prices": {"buy_store": "-- 円", "fleamarket": "-- 円", "auction": "-- 円"},
+            "market_prices": {"buy_store": "-- 円", "fleamarket": "-- 円", "auction": "-- 円", "full_set_estimate": "-- 円"},
             "details": []
         }
     }
@@ -254,7 +246,6 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            # 600x600に超軽量化して通信タイムアウトを完封
             image.thumbnail((600, 600))
             image = ImageEnhance.Sharpness(image).enhance(1.2)
 
