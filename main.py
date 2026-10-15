@@ -314,4 +314,27 @@ async def authenticate(
         contents = await file.read()
         try:
             image = Image.open(io.BytesIO(contents)).convert('RGB')
-            image.thumbnail((600, 6
+            image.thumbnail((600, 600))
+            image = ImageEnhance.Sharpness(image).enhance(1.2)
+
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG", quality=65)
+            img_bytes = buffered.getvalue()
+            base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
+
+    clean_old_jobs()
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
+
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images)
+
+    return {"status": "accepted", "job_id": job_id}
+
+@app.get("/api/v1/result/{job_id}")
+def get_result(job_id: str):
+    clean_old_jobs()
+    if job_id not in JOBS:
+        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
+    return JOBS[job_id]
