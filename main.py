@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator & Market Valuation Engine", version="131.0")
+app = FastAPI(title="Pro Authenticator & Market Valuation Engine", version="132.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator & Market Valuation Engine v131.0",
+        "engine": "Pro Authenticator & Market Valuation Engine v132.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -141,6 +141,51 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
 
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
+# Step 1: モデル候補3選 検出処理
+def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list, pil_images: list):
+    prompt = f"""
+あなたは日本のコメ兵、大黒屋、銀座ラシン、ジャックロード等で実績のある最高峰プロブランド鑑定士です。
+送信された全体画像から製品を特定し、適合する【モデル名・型番候補】を最大3つ抽出してJSON形式で返してください。
+
+【ブランド】: {brand}
+【カテゴリ】: {category}
+
+【出力JSONフォーマット】
+{{
+  "candidates": [
+    {{"id": 1, "title": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・セラクロムベゼル・現行41mmケース"}},
+    {{"id": 2, "title": "[型番: Ref.116610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・旧型40mmケース"}},
+    {{"id": 3, "title": "[型番: Ref.124060] ロレックス サブマリーナー (ノンデイト)", "desc": "黒文字盤・日付表示なし" Custom}}
+  ]
+}}
+"""
+    response_text, err_msg = execute_multi_ai_analysis(prompt, pil_images, base64_images)
+    if response_text:
+        try:
+            cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+            cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
+            cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
+            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
+            if json_match:
+                result_data = json.loads(json_match.group(0))
+                JOBS[job_id] = {"status": "completed", "data": result_data, "created_at": time.time()}
+                return
+        except Exception as e:
+            err_msg = f"候補抽出し解析エラー: {str(e)}"
+
+    JOBS[job_id] = {
+        "status": "completed",
+        "created_at": time.time(),
+        "data": {
+            "candidates": [
+                {"id": 1, "title": f"{brand} {category} (標準型番特定)", "desc": "画像から主要モデルを標準照合"},
+                {"id": 2, "title": f"{brand} {category} (類似モデルA)", "desc": "別バリエーション"},
+                {"id": 3, "title": f"{brand} {category} (手入力・自由指定)", "desc": "型番を手入力で指定"}
+            ]
+        }
+    }
+
+# Step 2: 8部位画像による本査定＆公式定価・動的相場出力
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
     prompt = f"""
 あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座、ジャックロード等で20年以上の実績を持つプロ鑑定士および二次流通市場相場アナリストです。
@@ -148,46 +193,37 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 【入力指定情報】
 - ブランド: {brand}
 - カテゴリ: {category}
-- 条件指定（型番/付属品/コンディションランク）: {model_number}
+- 選択/指定型番・条件: {model_number}
 
-【プロ鑑定＆市場相場算出の超厳格ルール】
+【プロ鑑定＆公式定価＋市場相場算出の超厳格ルール】
 1. 『detected_model』:
-   - ユーザーから指定型番（Ref番号やモデル型番）がある場合、送信された部位画像（文字盤、素材、柄、刻印、形状、金具等）が【その型番と100%適合するか】を精密照合すること。
-   - 適合している場合: 「[型番: 指定型番] ブランド名 ライン名 品名 (型番適合OK)」
-   - 矛盾・不一致がある場合: 「[型番不適合アラート] 画像の仕様と指定型番が一致しません（正解候補: ○○）」
-   - 型番指定がない場合: 画像から正解の型番を完全自動特定して出力すること。
+   - 選択されたモデル名・型番と画像（文字盤、素材、柄、刻印、形状等）を適合照合してください。
+   - 例: 「[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合OK)」
 
-2. 『market_prices』:
-   - **【対象範囲】**: 「本体のみ」や「ジャンク品（不動・動作不可・傷多数）」もプロの買取対象として正確に相場計算すること。
-   - **【除外ルール】**: 「パーツ単体（文字盤単体、ベルトのコマ単体、空箱等）」や「相場から大きく逸脱した異常値・吊り上げ価格」は一切除外し、該当する本体・ジャンク品そのものの実勢価格を算出すること。
-   - 指定された「コンディションランク（S/A/B/C/ジャンク）」および「付属品状態（本体のみ/保証書あり等）」に合致する日本国内のリアルな取引価格を算出してください。
-     - buy_store: 指定条件・状態でのプロ買取店仕入れ価格目安（例: "1,950,000円 ～ 2,100,000円"、ジャンク等の場合は "30,000円 ～ 50,000円 (要修理品相場)"）
-     - fleamarket: メルカリ・ラクマ実勢販売相場
-     - auction: ヤフオク・業者オークション落札相場
-     - full_set_estimate: もし「付属品完備かつSランク美品」だった場合の最高買取水準参考値
+2. 『official_price』:
+   - 該当製品の【日本国内におけるメーカー公式定価（税込 / 廃盤モデルの場合は最終公式定価）】をリアルに調べて算定してください。（例: "1,558,700円 (公式参考定価)"）
 
-3. 『message』:
-   - 買取現場のプロ鑑定士の思考プロセスに基づき、完全で自然な日本語の箇条書き（\\n区切り）で詳細に出力すること。
-     ・型番・モデル適合照合結果（画像アングルからの仕様適合度）
-     ・コンディションランク（美品〜ジャンク）および付属品（本体のみ/保証書有無）による相場影響の解説
-     ・8部位画像解析による真贋判定理由（刻印フォント精度、シリアル法則、金属・仕上げ品質）
+3. 『market_prices』:
+   - 指定条件での「買取店仕入れ相場」「フリマ相場」「オークション相場」「付属品完備・Sランク時上限」を算出。
+   - パーツ単体や異常値を除外すること。
 
-4. 『details』:
-   - 12個の多角チェック項目について、画像で確認できた場合は "PASS" または "FAIL"、写真に写っていない部位は "UNCHECKED" とすること。
+4. 『message』:
+   - 日本のプロ鑑定士の思考ロジックに基づき、完全で自然な日本語の箇条書き（\\n区切り）で詳細に出力すること。
 
-【出力JSONフォーマット（必ずこのキー構造のJSONのみを出力）】
+【出力JSONフォーマット】
 {{
-  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合確認OK)",
+  "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合OK)",
+  "official_price": "1,558,700円 (メーカー参考定価)",
   "overall_score": 98.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・ランク・付属品相場評価: 指定条件（本体のみ/Cランク等）に基づき、パーツ単体データを除外した正確な実勢買取相場を算出\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度および動作構造の整合性を確認",
+  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・定価比較: メーカー参考定価1,558,700円に対し、二次流通プレ値市場を形成\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度および動作構造はきわめて良好",
   "suspicious_points": [],
   "market_prices": {{
-    "buy_store": "1,650,000円 ～ 1,800,000円",
-    "fleamarket": "1,850,000円 ～ 2,000,000円",
-    "auction": "1,700,000円 ～ 1,850,000円",
-    "full_set_estimate": "2,250,000円（付属品完備・Sランク時参考）"
+    "buy_store": "1,950,000円 ～ 2,100,000円",
+    "fleamarket": "2,200,000円 ～ 2,400,000円",
+    "auction": "2,050,000円 ～ 2,200,000円",
+    "full_set_estimate": "2,250,000円（付属品完備・Sランク時）"
   }},
   "details": [
     {{"name": "1. ブランドロゴフォント・文字配置の正確性", "status": "PASS"}},
@@ -205,7 +241,6 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
   ]
 }}
 """
-
     response_text, err_msg = execute_multi_ai_analysis(prompt, pil_images, base64_images)
 
     if response_text:
@@ -216,8 +251,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
             
             json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
             if json_match:
-                clean_json = json_match.group(0)
-                result_data = json.loads(clean_json)
+                result_data = json.loads(json_match.group(0))
                 JOBS[job_id] = {"status": "completed", "data": result_data, "created_at": time.time()}
                 return
         except Exception as parse_e:
@@ -228,6 +262,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
         "created_at": time.time(),
         "data": {
             "detected_model": f"{brand} {category} (解析エラー)",
+            "official_price": "-- 円",
             "overall_score": 0.0,
             "judgment": "エラー発生",
             "status_code": "ERROR",
@@ -238,17 +273,51 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
         }
     }
 
+# Step 1 API (型番3選抽出)
+@app.post("/api/v1/detect_candidates")
+async def detect_candidates(
+    background_tasks: BackgroundTasks,
+    brand: str = Form(...),
+    category: str = Form(...),
+    files: List[UploadFile] = File(...)
+):
+    if not files or len(files) < 1:
+        raise HTTPException(status_code=400, detail="全体写真を1枚以上送信してください。")
+
+    base64_images = []
+    pil_images = []
+    for file in files:
+        contents = await file.read()
+        try:
+            image = Image.open(io.BytesIO(contents)).convert('RGB')
+            image.thumbnail((600, 600))
+            buffered = io.BytesIO()
+            image.save(buffered, format="JPEG", quality=65)
+            img_bytes = buffered.getvalue()
+            pil_images.append(Image.open(io.BytesIO(img_bytes)))
+            base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
+
+    clean_old_jobs()
+    job_id = str(uuid.uuid4())
+    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
+
+    background_tasks.add_task(process_candidate_job, job_id, brand, category, base64_images, pil_images)
+
+    return {"status": "accepted", "job_id": job_id}
+
+# Step 2 API (精密鑑識＆定価＋相場出力)
 @app.post("/api/v1/authenticate")
 async def authenticate(
     background_tasks: BackgroundTasks,
     brand: str = Form(...),
     category: str = Form(...),
     model_number: Optional[str] = Form(""),
-    serial_number: Optional[str] = Form(""),
     files: List[UploadFile] = File(...)
 ):
     if not files or len(files) < 1:
-        raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
+        raise HTTPException(status_code=400, detail="解析用画像を1枚以上送信してください。")
 
     base64_images = []
     pil_images = []
