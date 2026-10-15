@@ -13,13 +13,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="126.0")
+app = FastAPI(title="Ultra Multi-AI Authenticator & Market Engine", version="128.0")
 
+# CORS設定の完全開通
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -32,7 +34,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Ultra Multi-AI Authenticator & Market Engine v126.0",
+        "engine": "Ultra Multi-AI Authenticator & Market Engine v128.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -40,9 +42,9 @@ def read_root():
 
 def clean_old_jobs():
     now = time.time()
-    expired_keys = [k for k, v in JOBS.items() if now - v.get("created_at", now) > 900]
-    for k in expired_keys:
-        del JOBS[k]
+    for k in list(JOBS.keys()):
+        if now - JOBS[k].get("created_at", now) > 900:
+            JOBS.pop(k, None)
 
 def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
     try:
@@ -63,11 +65,10 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 25):
     except Exception as e:
         return None, str(e)
 
-# 引数エラー(TypeError)を完全修正: pil_images を正しく受け取り
 def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- 第1優先: Gemini API (公式SDK) ---
+    # --- 第1優先: Gemini API ---
     if GEMINI_API_KEY:
         try:
             genai.configure(api_key=GEMINI_API_KEY)
@@ -113,7 +114,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
 
-    # --- 第3優先: Groq API (モデル名修正済) ---
+    # --- 第3優先: Groq API ---
     if GROQ_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {GROQ_API_KEY}",
@@ -204,7 +205,11 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     if response_text:
         try:
-            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            # 高度なJSONクレンジング処理
+            cleaned_text = re.sub(r'```json\s*', '', response_text)
+            cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
+            
+            json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
             if json_match:
                 clean_json = json_match.group(0)
                 result_data = json.loads(clean_json)
