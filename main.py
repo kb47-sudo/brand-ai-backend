@@ -12,7 +12,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Pro Authenticator Engine", version="135.0")
+app = FastAPI(title="Pro Authenticator Engine", version="136.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,7 +32,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v135.0",
+        "engine": "Pro Authenticator Engine v136.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -63,8 +63,9 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 35):
     except Exception as e:
         return None, str(e)
 
-def call_gemini_rest_api(api_key: str, model_name: str, prompt: str, base64_images: list):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+def call_gemini_api_direct(api_key: str, prompt: str, base64_images: list):
+    # Gemini公式REST APIの標準仕様エンドポイント
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
     
     parts = [{"text": prompt}]
@@ -89,20 +90,19 @@ def call_gemini_rest_api(api_key: str, model_name: str, prompt: str, base64_imag
         cand = res_json["candidates"][0]
         if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
             return cand["content"]["parts"][0].get("text", "").strip(), None
-    return None, err or "Gemini REST empty response"
+    return None, err or "Gemini API Empty Response"
 
 def execute_multi_ai_analysis(prompt: str, base64_images: list):
     logs = []
 
-    # --- 第1優先: Gemini REST API (確実動作モデル) ---
+    # --- 第1優先: Gemini REST API (標準仕様直叩き) ---
     if GEMINI_API_KEY:
-        for g_model in ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]:
-            res_text, err = call_gemini_rest_api(GEMINI_API_KEY, g_model, prompt, base64_images)
-            if res_text:
-                return res_text, None
-            logs.append(f"Gemini({g_model}): {err}")
+        res_text, err = call_gemini_api_direct(GEMINI_API_KEY, prompt, base64_images)
+        if res_text:
+            return res_text, None
+        logs.append(f"Gemini: {err}")
 
-    # --- 第2優先: OpenRouter API ---
+    # --- 第2優先: OpenRouter API (モデル名修正) ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -115,7 +115,7 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["google/gemini-flash-1.5", "meta-llama/llama-3.2-11b-vision-instruct"]:
+        for or_model in ["meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemini-2.0-flash-exp:free"]:
             or_payload = {
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
@@ -126,31 +126,6 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 if content and len(content.strip()) > 0:
                     return content.strip(), None
             logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
-
-    # --- 第3優先: Groq API ---
-    if GROQ_API_KEY and base64_images:
-        headers = {
-            "Authorization": f"Bearer {GROQ_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        content_payload = [{"type": "text", "text": prompt}]
-        for b64_img in base64_images:
-            content_payload.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
-            })
-        
-        for groq_model in ["llama-3.2-11b-vision-preview", "llama-3.3-70b-versatile"]:
-            groq_payload = {
-                "model": groq_model,
-                "messages": [{"role": "user", "content": content_payload}]
-            }
-            res_json, err = http_post_json("https://api.groq.com/openai/v1/chat/completions", headers, groq_payload, timeout=20)
-            if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
-                content = res_json["choices"][0]["message"]["content"]
-                if content and len(content.strip()) > 0:
-                    return content.strip(), None
-            logs.append(f"Groq({groq_model}): {err or 'Empty'}")
 
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
