@@ -328,3 +328,4 @@ def get_result(job_id: str):
     if job_id not in JOBS:
         raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
     return JOBS[job_id]
+    
