@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator Engine (Gemini Dedicated)", version="138.0")
+app = FastAPI(title="Pro Authenticator Engine (Gemini Auto)", version="139.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +28,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v138.0 (Gemini Dedicated)",
+        "engine": "Pro Authenticator Engine v139.0 (Auto Model Fallback)",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -50,17 +50,24 @@ def execute_gemini_analysis(prompt: str, pil_images: list):
             response_mime_type="application/json"
         )
         
-        # 安定動作するGemini公式モデルで順次実行
-        for g_model in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+        # 利用可能なGoogle最新モデル群を順に試行
+        target_models = [
+            "gemini-2.0-flash",
+            "gemini-2.5-flash",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro-latest"
+        ]
+
+        for g_model in target_models:
             try:
                 model = genai.GenerativeModel(model_name=g_model, generation_config=config)
                 res = model.generate_content([prompt] + pil_images)
                 if res and hasattr(res, 'text') and res.text:
                     return res.text.strip(), None
             except Exception as g_err:
-                logs.append(f"{g_model}: {str(g_err)}")
+                logs.append(f"{g_model}: {str(g_err)[:100]}")
     except Exception as e:
-        logs.append(f"GeminiInitError: {str(e)}")
+        logs.append(f"GeminiInitError: {str(e)[:100]}")
 
     return None, f"Gemini解析エラー詳細: {' | '.join(logs)}"
 
