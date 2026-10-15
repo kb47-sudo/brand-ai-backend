@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator & Market Valuation Engine", version="132.0")
+app = FastAPI(title="Pro Authenticator & Market Valuation Engine", version="133.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,7 +33,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator & Market Valuation Engine v132.0",
+        "engine": "Pro Authenticator Strict Engine v133.0",
         "gemini_active": bool(GEMINI_API_KEY),
         "openrouter_active": bool(OPENROUTER_API_KEY),
         "groq_active": bool(GROQ_API_KEY)
@@ -72,7 +72,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
         try:
             genai.configure(api_key=GEMINI_API_KEY)
             generation_config = {
-                "temperature": 0.05,
+                "temperature": 0.0,
                 "response_mime_type": "application/json"
             }
             for g_model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
@@ -106,7 +106,7 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
                 "model": or_model,
                 "messages": [{"role": "user", "content": content_payload}]
             }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=25)
+            res_json, err = http_post_json("https://openrouter.ai/ai/v1/chat/completions", headers, or_payload, timeout=25)
             if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
                 content = res_json["choices"][0]["message"]["content"]
                 if content and len(content.strip()) > 0:
@@ -144,18 +144,18 @@ def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list
 # Step 1: モデル候補3選 検出処理
 def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list, pil_images: list):
     prompt = f"""
-あなたは日本のコメ兵、大黒屋、銀座ラシン、ジャックロード等で実績のある最高峰プロブランド鑑定士です。
-送信された全体画像から製品を特定し、適合する【モデル名・型番候補】を最大3つ抽出してJSON形式で返してください。
+あなたは日本の大手買取店（コメ兵、大黒屋、コミット銀座、ジャックロード）で20年以上の鑑識歴を持つ「最高峰プロ鑑定士」です。
+送信された画像からモデルを特定し、適合する【モデル名・型番候補】を3つ抽出してJSON形式で返してください。
 
 【ブランド】: {brand}
 【カテゴリ】: {category}
 
-【出力JSONフォーマット】
+【厳格出力JSONフォーマット】
 {{
   "candidates": [
-    {{"id": 1, "title": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・セラクロムベゼル・現行41mmケース"}},
-    {{"id": 2, "title": "[型番: Ref.116610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・旧型40mmケース"}},
-    {{"id": 3, "title": "[型番: Ref.124060] ロレックス サブマリーナー (ノンデイト)", "desc": "黒文字盤・日付表示なし" Custom}}
+    {{"id": 1, "title": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・セラクロムベゼル・現行41mm"}},
+    {{"id": 2, "title": "[型番: Ref.116610LN] ロレックス サブマリーナー デイト", "desc": "黒文字盤・旧型40mm"}},
+    {{"id": 3, "title": "[型番: Ref.124060] ロレックス サブマリーナー (ノンデイト)", "desc": "黒文字盤・デイト表示なし"}}
   ]
 }}
 """
@@ -185,39 +185,48 @@ def process_candidate_job(job_id: str, brand: str, category: str, base64_images:
         }
     }
 
-# Step 2: 8部位画像による本査定＆公式定価・動的相場出力
+# Step 2: 超厳格真贋鑑識 ＆ 公式定価＋動的相場出力
 def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
     prompt = f"""
-あなたは日本のコメ兵、大黒屋、銀座ラシン、銀蔵、コミット銀座、ジャックロード等で20年以上の実績を持つプロ鑑定士および二次流通市場相場アナリストです。
+あなたは日本のコメ兵、大黒屋、銀座ラシン、コミット銀座等で20年以上の鑑定歴を持つ「超厳格なプロ真贋鑑識官」および市場相場アナリストです。
 
-【入力指定情報】
+【指定情報】
 - ブランド: {brand}
 - カテゴリ: {category}
 - 選択/指定型番・条件: {model_number}
 
-【プロ鑑定＆公式定価＋市場相場算出の超厳格ルール】
-1. 『detected_model』:
-   - 選択されたモデル名・型番と画像（文字盤、素材、柄、刻印、形状等）を適合照合してください。
-   - 例: 「[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合OK)」
+【超厳格 真贋判定プロトコル（※判定基準を極限まで厳しくすること）】
+1. 『真贋チェック基準』:
+   - 偽物（Super Clone / 1:1 コピー / 精巧スーパーコピー）の流入を防ぐため、微細なポイントまで超厳格に監査すること。
+   - 以下の部位に少しでもフォントの乱れ、エッジの甘さ、印字の滲み、刻印の深さ・形状の不自然さ、金属仕上げ（コバ・ポリッシュ・サテン）のチープさがある場合は、躊躇なく「判定: 注意」または「判定: 基準外」とし、scoreを下げてください。
+     ① ブランドロゴフォント（文字間隔、真円性、OやS等のエッジ）
+     ② シリアル/Ref型番刻印（レーザー刻印の深さ、打ち込みの質感、文字揃い）
+     ③ 文字盤/キャンバス印刷（インデックス配置、ダイヤル印字の立体感）
+     ④ 金具/カシメ/ビス（ネジ山の精度、メッキの輝きとバリ、彫り込み精度）
+     ⑤ 縫製/ステッチ（針目の角度、ピッチ間隔、糸の太さと始末）
+     ⑥ 素材質感/コバ塗り（レザーのしなやかさ、コバ塗り塗膜の厚みと塗ムラ）
 
-2. 『official_price』:
-   - 該当製品の【日本国内におけるメーカー公式定価（税込 / 廃盤モデルの場合は最終公式定価）】をリアルに調べて算定してください。（例: "1,558,700円 (公式参考定価)"）
+2. 『suspicious_points（不審・懸念箇所の箇条書き出力）』:
+   - 違和感・基準不適合の可能性がある場合、その具体的な理由（例: 「ロゴフォントの『O』の真円率が低く印字が甘い」「ルーレット刻印の文字深さが浅い」「カシメ金具に微細なバリが見受けられる」等）を『suspicious_points』配列に最大3項目まで明記すること。
+   - 100%基準内と確信できる場合のみ空配列 `[]` とすること。
 
-3. 『market_prices』:
-   - 指定条件での「買取店仕入れ相場」「フリマ相場」「オークション相場」「付属品完備・Sランク時上限」を算出。
-   - パーツ単体や異常値を除外すること。
+3. 『judgment & overall_score』:
+   - 100%基準内かつ高品質: judgment="基準内", status_code="PASS", score=92.0～99.0
+   - わずかでも違和感・写真不鮮明あり: judgment="注意", status_code="WARNING", score=70.0～84.0
+   - 明らかな偽物・基準不適合: judgment="基準外", status_code="FAIL", score=10.0～59.0
 
-4. 『message』:
-   - 日本のプロ鑑定士の思考ロジックに基づき、完全で自然な日本語の箇条書き（\\n区切り）で詳細に出力すること。
+4. 『official_price & market_prices』:
+   - 日本国内メーカー公式参考定価（税込）を算定。
+   - 買取店仕入れ目安、フリマ相場、オークション相場、付属品完備時上限を正確に出力。
 
 【出力JSONフォーマット】
 {{
   "detected_model": "[型番: Ref.126610LN] ロレックス サブマリーナー デイト (型番適合OK)",
   "official_price": "1,558,700円 (メーカー参考定価)",
-  "overall_score": 98.5,
+  "overall_score": 96.5,
   "judgment": "基準内",
   "status_code": "PASS",
-  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・定価比較: メーカー参考定価1,558,700円に対し、二次流通プレ値市場を形成\\n・刻印・ルーレット解析: 6時位置ルーレット刻印の「ROLEX」フォントおよびシリアル深さは正規品基準に適合\\n・ブレス・クラスプ解析: クラスプ内部刻印のフォント精度および動作構造はきわめて良好",
+  "message": "・型番適合確認: 指定されたRef.126610LNと画像の黒文字盤・セラクロムベゼル仕様は完全合致\\n・真贋鑑識結果: 6時位置ルーレット刻印、クラウンロゴ、クラスプ内部彫り込みのフォントおよび深さはメーカー基準に適合\\n・定価比較: メーカー参考定価1,558,700円に対し、二次流通プレ値市場を形成",
   "suspicious_points": [],
   "market_prices": {{
     "buy_store": "1,950,000円 ～ 2,100,000円",
@@ -307,7 +316,7 @@ async def detect_candidates(
 
     return {"status": "accepted", "job_id": job_id}
 
-# Step 2 API (精密鑑識＆定価＋相場出力)
+# Step 2 API (超厳格鑑識＆公式定価＋相場出力)
 @app.post("/api/v1/authenticate")
 async def authenticate(
     background_tasks: BackgroundTasks,
