@@ -11,8 +11,9 @@ from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
+import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator Engine", version="136.0")
+app = FastAPI(title="Pro Authenticator Engine", version="137.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +25,6 @@ app.add_middleware(
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 JOBS = {}
 
@@ -32,10 +32,9 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v136.0",
+        "engine": "Pro Authenticator Engine v137.0",
         "gemini_active": bool(GEMINI_API_KEY),
-        "openrouter_active": bool(OPENROUTER_API_KEY),
-        "groq_active": bool(GROQ_API_KEY)
+        "openrouter_active": bool(OPENROUTER_API_KEY)
     }
 
 def clean_old_jobs():
@@ -63,46 +62,30 @@ def http_post_json(url: str, headers: dict, data_dict: dict, timeout: int = 35):
     except Exception as e:
         return None, str(e)
 
-def call_gemini_api_direct(api_key: str, prompt: str, base64_images: list):
-    # Gemini公式REST APIの標準仕様エンドポイント
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    
-    parts = [{"text": prompt}]
-    for b64_img in base64_images:
-        parts.append({
-            "inline_data": {
-                "mime_type": "image/jpeg",
-                "data": b64_img
-            }
-        })
-    
-    payload = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "temperature": 0.1,
-            "responseMimeType": "application/json"
-        }
-    }
-    
-    res_json, err = http_post_json(url, headers, payload, timeout=30)
-    if res_json and "candidates" in res_json and len(res_json["candidates"]) > 0:
-        cand = res_json["candidates"][0]
-        if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
-            return cand["content"]["parts"][0].get("text", "").strip(), None
-    return None, err or "Gemini API Empty Response"
-
-def execute_multi_ai_analysis(prompt: str, base64_images: list):
+def execute_multi_ai_analysis(prompt: str, pil_images: list, base64_images: list):
     logs = []
 
-    # --- 第1優先: Gemini REST API (標準仕様直叩き) ---
+    # --- 第1優先: Google Gemini SDK (標準公式安定動作) ---
     if GEMINI_API_KEY:
-        res_text, err = call_gemini_api_direct(GEMINI_API_KEY, prompt, base64_images)
-        if res_text:
-            return res_text, None
-        logs.append(f"Gemini: {err}")
+        try:
+            genai.configure(api_key=GEMINI_API_KEY)
+            config = genai.types.GenerationConfig(
+                temperature=0.1,
+                response_mime_type="application/json"
+            )
+            # 公式推奨モデル名
+            for g_model in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+                try:
+                    model = genai.GenerativeModel(model_name=g_model, generation_config=config)
+                    res = model.generate_content([prompt] + pil_images)
+                    if res and hasattr(res, 'text') and res.text:
+                        return res.text.strip(), None
+                except Exception as g_err:
+                    logs.append(f"Gemini({g_model}): {str(g_err)[:80]}")
+        except Exception as e:
+            logs.append(f"GeminiInit: {str(e)[:80]}")
 
-    # --- 第2優先: OpenRouter API (モデル名修正) ---
+    # --- 第2優先: OpenRouter API (Auto-router) ---
     if OPENROUTER_API_KEY and base64_images:
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -115,22 +98,21 @@ def execute_multi_ai_analysis(prompt: str, base64_images: list):
                 "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}
             })
 
-        for or_model in ["meta-llama/llama-3.2-11b-vision-instruct:free", "google/gemini-2.0-flash-exp:free"]:
-            or_payload = {
-                "model": or_model,
-                "messages": [{"role": "user", "content": content_payload}]
-            }
-            res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=25)
-            if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
-                content = res_json["choices"][0]["message"]["content"]
-                if content and len(content.strip()) > 0:
-                    return content.strip(), None
-            logs.append(f"OpenRouter({or_model}): {err or 'Empty'}")
+        or_payload = {
+            "model": "openrouter/free",
+            "messages": [{"role": "user", "content": content_payload}]
+        }
+        res_json, err = http_post_json("https://openrouter.ai/api/v1/chat/completions", headers, or_payload, timeout=30)
+        if res_json and "choices" in res_json and len(res_json["choices"]) > 0:
+            content = res_json["choices"][0]["message"]["content"]
+            if content and len(content.strip()) > 0:
+                return content.strip(), None
+        logs.append(f"OpenRouter: {err or 'Empty response'}")
 
     return None, f"全AI接続失敗詳細: {' | '.join(logs)}"
 
 # Step 1: モデル候補3選 検出処理
-def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list):
+def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list, pil_images: list):
     prompt = f"""
 あなたは日本のプロブランド鑑定士です。
 送信された画像から製品を特定し、適合する【モデル名・型番候補】を3つ抽出してJSONで返してください。
@@ -147,7 +129,7 @@ def process_candidate_job(job_id: str, brand: str, category: str, base64_images:
   ]
 }}
 """
-    response_text, err_msg = execute_multi_ai_analysis(prompt, base64_images)
+    response_text, err_msg = execute_multi_ai_analysis(prompt, pil_images, base64_images)
     if response_text:
         try:
             cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
@@ -174,7 +156,7 @@ def process_candidate_job(job_id: str, brand: str, category: str, base64_images:
     }
 
 # Step 2: 鑑識＆公式定価・相場出力
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list):
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list, pil_images: list):
     prompt = f"""
 あなたは日本のプロ鑑定士および市場相場アナリストです。
 入力情報と送信画像を比較照合し、鑑識結果と公式定価、相場をJSONで出力してください。
@@ -210,7 +192,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
   ]
 }}
 """
-    response_text, err_msg = execute_multi_ai_analysis(prompt, base64_images)
+    response_text, err_msg = execute_multi_ai_analysis(prompt, pil_images, base64_images)
 
     if response_text:
         try:
@@ -253,6 +235,7 @@ async def detect_candidates(
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
     base64_images = []
+    pil_images = []
     for file in files:
         contents = await file.read()
         try:
@@ -261,6 +244,7 @@ async def detect_candidates(
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=65)
             img_bytes = buffered.getvalue()
+            pil_images.append(Image.open(io.BytesIO(img_bytes)))
             base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
@@ -269,7 +253,7 @@ async def detect_candidates(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_candidate_job, job_id, brand, category, base64_images)
+    background_tasks.add_task(process_candidate_job, job_id, brand, category, base64_images, pil_images)
 
     return {"status": "accepted", "job_id": job_id}
 
@@ -285,6 +269,7 @@ async def authenticate(
         raise HTTPException(status_code=400, detail="解析用画像を1枚以上送信してください。")
 
     base64_images = []
+    pil_images = []
     for file in files:
         contents = await file.read()
         try:
@@ -295,21 +280,5 @@ async def authenticate(
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=65)
             img_bytes = buffered.getvalue()
-            base64_images.append(base64.b64encode(img_bytes).decode("utf-8"))
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
-
-    clean_old_jobs()
-    job_id = str(uuid.uuid4())
-    JOBS[job_id] = {"status": "processing", "created_at": time.time()}
-
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images)
-
-    return {"status": "accepted", "job_id": job_id}
-
-@app.get("/api/v1/result/{job_id}")
-def get_result(job_id: str):
-    clean_old_jobs()
-    if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
-    return JOBS[job_id]
+            pil_images.append(Image.open(io.BytesIO(img_bytes)))
+            base64_images.append(base64.b64encode
