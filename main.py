@@ -11,7 +11,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Pro Authenticator Engine (Gemini Direct)", version="142.0")
+app = FastAPI(title="Pro Authenticator Engine", version="143.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v142.0 (Gemini Direct REST)",
+        "engine": "Pro Authenticator Engine v143.0 (Clean REST)",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -39,9 +39,9 @@ def clean_old_jobs():
         if now - JOBS[k].get("created_at", now) > 900:
             JOBS.pop(k, None)
 
-def call_gemini_direct(api_key: str, model_name: str, prompt: str, base64_images: list):
-    """Google Gemini REST API を直接呼び出して404指定エラーを防止"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+def call_gemini_api(api_key: str, model_name: str, prompt: str, base64_images: list):
+    # Google APIの最新正式エンドポイント
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
 
     parts = [{"text": prompt}]
@@ -78,7 +78,7 @@ def call_gemini_direct(api_key: str, model_name: str, prompt: str, base64_images
     except urllib.error.HTTPError as e:
         try:
             err_body = e.read().decode('utf-8')
-            return None, f"HTTP {e.code}: {err_body[:100]}"
+            return None, f"HTTP {e.code}: {err_body[:120]}"
         except:
             return None, f"HTTP {e.code}"
     except Exception as e:
@@ -89,11 +89,11 @@ def execute_gemini_analysis(prompt: str, base64_images: list):
         return None, "GEMINI_API_KEY が設定されていません。"
 
     logs = []
-    # 確実に存在するモデル名順に直接リクエスト
-    target_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+    # 2026年現在の安定稼働モデル順
+    target_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
     for m_name in target_models:
-        res_text, err = call_gemini_direct(GEMINI_API_KEY, m_name, prompt, base64_images)
+        res_text, err = call_gemini_api(GEMINI_API_KEY, m_name, prompt, base64_images)
         if res_text:
             return res_text, None
         logs.append(f"{m_name}: {err}")
@@ -185,7 +185,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     if response_text:
         try:
-            cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
+            cleaned_text = re.sub(r'<think>.*.*?/think>', '', response_text, flags=re.DOTALL)
             cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
             cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
 
