@@ -11,7 +11,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Pro Authenticator Engine", version="143.0")
+app = FastAPI(title="Pro Authenticator Engine", version="144.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v143.0 (Clean REST)",
+        "engine": "Pro Authenticator Engine v144.0",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -40,8 +40,8 @@ def clean_old_jobs():
             JOBS.pop(k, None)
 
 def call_gemini_api(api_key: str, model_name: str, prompt: str, base64_images: list):
-    # Google APIの最新正式エンドポイント
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model_name}:generateContent?key={api_key}"
+    # v1beta エンドポイントを使用
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
 
     parts = [{"text": prompt}]
@@ -89,8 +89,8 @@ def execute_gemini_analysis(prompt: str, base64_images: list):
         return None, "GEMINI_API_KEY が設定されていません。"
 
     logs = []
-    # 2026年現在の安定稼働モデル順
-    target_models = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    # 順次試行するモデルリスト
+    target_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
     for m_name in target_models:
         res_text, err = call_gemini_api(GEMINI_API_KEY, m_name, prompt, base64_images)
@@ -185,7 +185,7 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
 
     if response_text:
         try:
-            cleaned_text = re.sub(r'<think>.*.*?/think>', '', response_text, flags=re.DOTALL)
+            cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
             cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
             cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
 
