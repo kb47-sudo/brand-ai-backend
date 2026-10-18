@@ -11,7 +11,7 @@ from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTa
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 
-app = FastAPI(title="Pro Authenticator Engine", version="144.0")
+app = FastAPI(title="Pro Authenticator Engine", version="145.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,7 +29,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v144.0",
+        "engine": "Pro Authenticator Engine v145.0 (Auto-Resolver)",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -39,8 +39,31 @@ def clean_old_jobs():
         if now - JOBS[k].get("created_at", now) > 900:
             JOBS.pop(k, None)
 
-def call_gemini_api(api_key: str, model_name: str, prompt: str, base64_images: list):
-    # v1beta エンドポイントを使用
+def get_available_gemini_models(api_key: str):
+    """Google APIから現在利用可能なモデル一覧を直接取得"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    try:
+        req = urllib.request.Request(url, method='GET')
+        with urllib.request.urlopen(req, timeout=15) as response:
+            if response.status == 200:
+                data = json.loads(response.read().decode('utf-8'))
+                models = []
+                for m in data.get("models", []):
+                    methods = m.get("supportedGenerationMethods", [])
+                    if "generateContent" in methods:
+                        # "models/gemini-1.5-flash" -> "gemini-1.5-flash"
+                        name = m.get("name", "").replace("models/", "")
+                        models.append(name)
+                # flash系を優先
+                flash_models = [m for m in models if "flash" in m]
+                other_models = [m for m in models if "flash" not in m]
+                return flash_models + other_models
+    except Exception as e:
+        pass
+    # フォールバック用デフォルトリスト
+    return ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro"]
+
+def call_gemini_direct(api_key: str, model_name: str, prompt: str, base64_images: list):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
     headers = {"Content-Type": "application/json"}
 
@@ -72,13 +95,13 @@ def call_gemini_api(api_key: str, model_name: str, prompt: str, base64_images: l
                     cand = res_json["candidates"][0]
                     if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
                         return cand["content"]["parts"][0].get("text", "").strip(), None
-                return None, "APIからの応答が空でした。"
+                return None, "空の応答"
             else:
-                return None, f"HTTP Status {response.status}"
+                return None, f"HTTP {response.status}"
     except urllib.error.HTTPError as e:
         try:
             err_body = e.read().decode('utf-8')
-            return None, f"HTTP {e.code}: {err_body[:120]}"
+            return None, f"HTTP {e.code}: {err_body[:100]}"
         except:
             return None, f"HTTP {e.code}"
     except Exception as e:
@@ -88,17 +111,17 @@ def execute_gemini_analysis(prompt: str, base64_images: list):
     if not GEMINI_API_KEY:
         return None, "GEMINI_API_KEY が設定されていません。"
 
+    # 有効なモデル名を動的に取得
+    target_models = get_available_gemini_models(GEMINI_API_KEY)
     logs = []
-    # 順次試行するモデルリスト
-    target_models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
 
     for m_name in target_models:
-        res_text, err = call_gemini_api(GEMINI_API_KEY, m_name, prompt, base64_images)
+        res_text, err = call_gemini_direct(GEMINI_API_KEY, m_name, prompt, base64_images)
         if res_text:
             return res_text, None
         logs.append(f"{m_name}: {err}")
 
-    return None, f"Gemini解析エラー詳細: {' | '.join(logs)}"
+    return None, f"Gemini解析エラー詳細: {' | '.join(logs[:3])}"
 
 # Step 1: モデル候補3選 検出処理
 def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list):
@@ -280,5 +303,4 @@ async def authenticate(
 def get_result(job_id: str):
     clean_old_jobs()
     if job_id not in JOBS:
-        raise HTTPException(status_code=404, detail="指定のジョブが見つかりません。")
-    return JOBS[job_id]
+        raise HTTPException(status_code=4
