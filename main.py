@@ -4,13 +4,14 @@ import json
 import re
 import uuid
 import time
+import base64
+import urllib.request
 from PIL import Image, ImageEnhance
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-import google.generativeai as genai
 
-app = FastAPI(title="Pro Authenticator Engine (Gemini Fixed)", version="141.0")
+app = FastAPI(title="Pro Authenticator Engine (Gemini Direct)", version="142.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +29,7 @@ JOBS = {}
 def read_root():
     return {
         "status": "Live",
-        "engine": "Pro Authenticator Engine v141.0",
+        "engine": "Pro Authenticator Engine v142.0 (Gemini Direct REST)",
         "gemini_active": bool(GEMINI_API_KEY)
     }
 
@@ -38,34 +39,69 @@ def clean_old_jobs():
         if now - JOBS[k].get("created_at", now) > 900:
             JOBS.pop(k, None)
 
-def execute_gemini_analysis(prompt: str, pil_images: list):
+def call_gemini_direct(api_key: str, model_name: str, prompt: str, base64_images: list):
+    """Google Gemini REST API を直接呼び出して404指定エラーを防止"""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
+
+    parts = [{"text": prompt}]
+    for b64 in base64_images:
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": b64
+            }
+        })
+
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.1,
+            "responseMimeType": "application/json"
+        }
+    }
+
+    try:
+        json_bytes = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(url, data=json_bytes, headers=headers, method='POST')
+        with urllib.request.urlopen(req, timeout=35) as response:
+            if response.status == 200:
+                res_body = response.read().decode('utf-8')
+                res_json = json.loads(res_body)
+                if "candidates" in res_json and len(res_json["candidates"]) > 0:
+                    cand = res_json["candidates"][0]
+                    if "content" in cand and "parts" in cand["content"] and len(cand["content"]["parts"]) > 0:
+                        return cand["content"]["parts"][0].get("text", "").strip(), None
+                return None, "APIからの応答が空でした。"
+            else:
+                return None, f"HTTP Status {response.status}"
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode('utf-8')
+            return None, f"HTTP {e.code}: {err_body[:100]}"
+        except:
+            return None, f"HTTP {e.code}"
+    except Exception as e:
+        return None, str(e)
+
+def execute_gemini_analysis(prompt: str, base64_images: list):
     if not GEMINI_API_KEY:
         return None, "GEMINI_API_KEY が設定されていません。"
 
     logs = []
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        config = {
-            "temperature": 0.1,
-            "response_mime_type": "application/json"
-        }
-        
-        # 確実に稼働する主要モデルリスト
-        for g_model in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.5-pro"]:
-            try:
-                model = genai.GenerativeModel(model_name=g_model, generation_config=config)
-                res = model.generate_content([prompt] + pil_images)
-                if res and hasattr(res, 'text') and res.text:
-                    return res.text.strip(), None
-            except Exception as g_err:
-                logs.append(f"{g_model}: {str(g_err)[:80]}")
-    except Exception as e:
-        logs.append(f"GeminiInitError: {str(e)[:80]}")
+    # 確実に存在するモデル名順に直接リクエスト
+    target_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+
+    for m_name in target_models:
+        res_text, err = call_gemini_direct(GEMINI_API_KEY, m_name, prompt, base64_images)
+        if res_text:
+            return res_text, None
+        logs.append(f"{m_name}: {err}")
 
     return None, f"Gemini解析エラー詳細: {' | '.join(logs)}"
 
 # Step 1: モデル候補3選 検出処理
-def process_candidate_job(job_id: str, brand: str, category: str, pil_images: list):
+def process_candidate_job(job_id: str, brand: str, category: str, base64_images: list):
     prompt = f"""
 あなたは日本のプロブランド鑑定士です。
 送信された画像から製品を特定し、適合する【モデル名・型番候補】を3つ抽出してJSONで返してください。
@@ -82,7 +118,7 @@ def process_candidate_job(job_id: str, brand: str, category: str, pil_images: li
   ]
 }}
 """
-    response_text, err_msg = execute_gemini_analysis(prompt, pil_images)
+    response_text, err_msg = execute_gemini_analysis(prompt, base64_images)
     if response_text:
         try:
             cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
@@ -109,7 +145,7 @@ def process_candidate_job(job_id: str, brand: str, category: str, pil_images: li
     }
 
 # Step 2: 鑑識＆公式定価・相場出力
-def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, pil_images: list):
+def process_authentication_job(job_id: str, brand: str, category: str, model_number: str, base64_images: list):
     prompt = f"""
 あなたは日本のプロ鑑定士および市場相場アナリストです。
 入力情報と送信画像を比較照合し、鑑識結果と公式定価、相場をJSONで出力してください。
@@ -145,14 +181,14 @@ def process_authentication_job(job_id: str, brand: str, category: str, model_num
   ]
 }}
 """
-    response_text, err_msg = execute_gemini_analysis(prompt, pil_images)
+    response_text, err_msg = execute_gemini_analysis(prompt, base64_images)
 
     if response_text:
         try:
             cleaned_text = re.sub(r'<think>.*?</think>', '', response_text, flags=re.DOTALL)
             cleaned_text = re.sub(r'```json\s*', '', cleaned_text)
             cleaned_text = re.sub(r'```\s*$', '', cleaned_text).strip()
-            
+
             json_match = re.search(r'\{.*\}', cleaned_text, re.DOTALL)
             if json_match:
                 result_data = json.loads(json_match.group(0))
@@ -187,7 +223,7 @@ async def detect_candidates(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="画像を1枚以上送信してください。")
 
-    pil_images = []
+    base64_images = []
     for file in files:
         contents = await file.read()
         try:
@@ -195,7 +231,7 @@ async def detect_candidates(
             image.thumbnail((600, 600))
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=65)
-            pil_images.append(Image.open(io.BytesIO(buffered.getvalue())))
+            base64_images.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
@@ -203,7 +239,7 @@ async def detect_candidates(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_candidate_job, job_id, brand, category, pil_images)
+    background_tasks.add_task(process_candidate_job, job_id, brand, category, base64_images)
 
     return {"status": "accepted", "job_id": job_id}
 
@@ -218,7 +254,7 @@ async def authenticate(
     if not files or len(files) < 1:
         raise HTTPException(status_code=400, detail="解析用画像を1枚以上送信してください。")
 
-    pil_images = []
+    base64_images = []
     for file in files:
         contents = await file.read()
         try:
@@ -228,7 +264,7 @@ async def authenticate(
 
             buffered = io.BytesIO()
             image.save(buffered, format="JPEG", quality=65)
-            pil_images.append(Image.open(io.BytesIO(buffered.getvalue())))
+            base64_images.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"画像処理エラー: {str(e)}")
 
@@ -236,7 +272,7 @@ async def authenticate(
     job_id = str(uuid.uuid4())
     JOBS[job_id] = {"status": "processing", "created_at": time.time()}
 
-    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, pil_images)
+    background_tasks.add_task(process_authentication_job, job_id, brand, category, model_number, base64_images)
 
     return {"status": "accepted", "job_id": job_id}
 
